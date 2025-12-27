@@ -24,10 +24,8 @@ requires-python = ">=3.10"
 dependencies = [
     "singer-sdk~=0.53.4",
     "requests~=2.32.3",
-]
-
-[project.optional-dependencies]
-s3 = [
+    "pyarrow>=15",
+    "pyiceberg>=0.10.0",
     "s3fs~=2025.10.0",
 ]
 
@@ -38,6 +36,8 @@ target-s3tables = 'target_s3tables.target:TargetS3Tables.cli'
 [dependency-groups]
 dev = [
     { include-group = "test" },
+    "autopep8>=2.3.2",
+    "pylint>=4.0.4",
 ]
 test = [
     "pytest>=9",
@@ -55,9 +55,18 @@ minversion = "9.0"
 addopts = [
     "--durations=10",
 ]
+markers = [
+    "integration: optional tests requiring real AWS access",
+]
 
 [tool.mypy]
 warn_unused_configs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
 
 [tool.ruff]
 line-length = 100
