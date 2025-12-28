@@ -104,6 +104,10 @@ jobs:
         with:
           version: ">=0.8"
 
+      - name: Install dependencies
+        run: |
+          uv sync --frozen
+
       - name: Run Meltano
         run: |
           meltano run tap-smoke-test target-s3tables
@@ -151,6 +155,10 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           version: ">=0.8"
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen
 
       - name: Run Meltano
         run: |
