@@ -91,7 +91,7 @@ jobs:
       - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ROLE_NAME }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: 🏗 Set up Python ${{ matrix.python-version }}
@@ -149,7 +149,7 @@ jobs:
       - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ROLE_NAME }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: 🏗 Set up Python ${{ matrix.python-version }}
