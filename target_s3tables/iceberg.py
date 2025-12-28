@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 import json
 import logging
 import random
@@ -59,7 +60,10 @@ def get_catalog(config: ParsedConfig, *, log: logging.Logger) -> t.Any:
     catalog = load_catalog("target-s3tables", **props)
     with _CATALOG_LOCK:
         _CATALOG_CACHE[cache_key] = catalog
-    log.debug("Loaded Iceberg catalog using properties: %s", {k: v for k, v in props.items() if "secret" not in k})
+    log.debug(
+        "Loaded Iceberg catalog using properties: %s",
+        {k: v for k, v in props.items() if "secret" not in k},
+    )
     return catalog
 
 
@@ -159,13 +163,16 @@ def _dedupe_sanitized_names(names: t.Sequence[str]) -> dict[str, str]:
 
 
 def sanitize_namespace(namespace: str) -> str:
+    """Sanitize a namespace (dot-separated) into Iceberg-friendly identifiers."""
     return ".".join(sanitize_identifier(part) for part in namespace.split("."))
 
 
 def table_identifier_for_stream(config: ParsedConfig, *, stream_name: str) -> tuple[str, ...]:
+    """Return an Iceberg identifier tuple for a Singer stream."""
     namespace = config.namespace
     table_name = config.table_name_mapping.get(stream_name, stream_name)
-    table_name = f"{config.table_name_prefix}{table_name}" if config.table_name_prefix else table_name
+    if config.table_name_prefix:
+        table_name = f"{config.table_name_prefix}{table_name}"
 
     if config.sanitize_names:
         namespace = sanitize_namespace(namespace)
@@ -233,7 +240,13 @@ def evolve_table_schema_union_by_name(
     retry(_evolve, log=log, op="update_schema")
 
 
-def _create_namespace_if_needed(catalog: t.Any, *, namespace: tuple[str, ...], log: logging.Logger) -> None:
+def _create_namespace_if_needed(
+    catalog: t.Any,
+    *,
+    namespace: tuple[str, ...],
+    log: logging.Logger,
+) -> None:
+    """Create the namespace if supported by the catalog (best-effort)."""
     if not namespace:
         return
 
@@ -253,7 +266,7 @@ def _create_namespace_if_needed(catalog: t.Any, *, namespace: tuple[str, ...], l
 
 
 @dataclass(frozen=True)
-class FieldSpec:
+class FieldSpec:  # pylint: disable=too-many-instance-attributes
     """Field specification for record -> Arrow conversion."""
 
     source_name: str
@@ -272,6 +285,7 @@ def singer_schema_to_arrow_schema(
     sanitize_names: bool,
     log: logging.Logger,
 ) -> tuple[pa.Schema, tuple[FieldSpec, ...]]:
+    """Convert Singer JSON Schema (subset) to a PyArrow Schema + coercion plan."""
     properties = singer_schema.get("properties") or {}
     if not isinstance(properties, dict):
         properties = {}
@@ -299,6 +313,7 @@ def singer_schema_to_arrow_schema(
     return pa.schema(fields), tuple(specs)
 
 
+# pylint: disable-next=too-many-arguments,too-many-locals,too-many-return-statements
 def _jsonschema_to_fieldspec(  # noqa: PLR0913
     *,
     source_name: str,
@@ -331,8 +346,21 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
             sanitize_names=sanitize_names,
             log=log,
         )
-        list_type = pa.list_(pa.field("element", element_spec.arrow_type, nullable=element_spec.nullable))
-        return FieldSpec(source_name, target_name, list_type, nullable, "list", element=element_spec)
+        list_type = pa.list_(
+            pa.field(
+                "element",
+                element_spec.arrow_type,
+                nullable=element_spec.nullable,
+            ),
+        )
+        return FieldSpec(
+            source_name,
+            target_name,
+            list_type,
+            nullable,
+            "list",
+            element=element_spec,
+        )
     if json_type == "object":
         props = normalized.get("properties")
         if isinstance(props, dict) and props:
@@ -459,6 +487,7 @@ def records_to_arrow_table(
     arrow_schema: pa.Schema,
     specs: tuple[FieldSpec, ...],
 ) -> pa.Table:
+    """Convert a list of Singer records into a typed PyArrow table."""
     cooked: list[dict[str, t.Any]] = []
     for record in records:
         cooked.append(_coerce_record(record, specs))
@@ -473,6 +502,7 @@ def _coerce_record(record: dict[str, t.Any], specs: tuple[FieldSpec, ...]) -> di
     return out
 
 
+# pylint: disable-next=too-many-branches,too-many-return-statements
 def _coerce_value(value: t.Any, spec: FieldSpec) -> t.Any:  # noqa: ANN401, PLR0911
     if value is None:
         return None
@@ -579,22 +609,13 @@ def _coerce_datetime(value: t.Any) -> dt.datetime | None:  # noqa: ANN401
     return result
 
 
-class _IdGen:
-    def __init__(self, start: int = 1) -> None:
-        self._next = start
-
-    def next(self) -> int:
-        val = self._next
-        self._next += 1
-        return val
-
-
 def singer_schema_to_iceberg_schema(
     singer_schema: dict[str, t.Any],
     *,
     sanitize_names: bool,
     log: logging.Logger,
 ) -> Schema:
+    """Convert Singer JSON Schema (subset) to a PyIceberg Schema with deterministic IDs."""
     properties = singer_schema.get("properties") or {}
     if not isinstance(properties, dict):
         properties = {}
@@ -602,7 +623,7 @@ def singer_schema_to_iceberg_schema(
     required = set(singer_schema.get("required") or [])
     names = list(properties.keys())
     name_map = _dedupe_sanitized_names(names) if sanitize_names else {n: n for n in names}
-    id_gen = _IdGen(1)
+    next_id = itertools.count(1).__next__
 
     fields: list[NestedField] = []
     for source_name in sorted(names):
@@ -611,9 +632,9 @@ def singer_schema_to_iceberg_schema(
         nested = _jsonschema_to_nested_field(
             name=target_name,
             schema=field_schema,
-            field_id=id_gen.next(),
+            field_id=next_id(),
             required_in_parent=source_name in required,
-            id_gen=id_gen,
+            next_id=next_id,
             sanitize_names=sanitize_names,
             log=log,
         )
@@ -622,13 +643,14 @@ def singer_schema_to_iceberg_schema(
     return Schema(*fields)
 
 
+# pylint: disable-next=too-many-arguments
 def _jsonschema_to_nested_field(  # noqa: PLR0913
     *,
     name: str,
     schema: dict[str, t.Any],
     field_id: int,
     required_in_parent: bool,
-    id_gen: _IdGen,
+    next_id: t.Callable[[], int],
     sanitize_names: bool,
     log: logging.Logger,
 ) -> NestedField:
@@ -636,17 +658,18 @@ def _jsonschema_to_nested_field(  # noqa: PLR0913
     required = bool(required_in_parent) and not nullable
     field_type = _jsonschema_to_iceberg_type(
         normalized,
-        id_gen=id_gen,
+        next_id=next_id,
         sanitize_names=sanitize_names,
         log=log,
     )
     return NestedField(field_id=field_id, name=name, field_type=field_type, required=required)
 
 
+# pylint: disable-next=too-many-branches,too-many-locals,too-many-return-statements
 def _jsonschema_to_iceberg_type(
     schema: dict[str, t.Any],
     *,
-    id_gen: _IdGen,
+    next_id: t.Callable[[], int],
     sanitize_names: bool,
     log: logging.Logger,
 ) -> t.Any:  # noqa: ANN401, PLR0911
@@ -669,10 +692,10 @@ def _jsonschema_to_iceberg_type(
     if json_type == "array":
         items = t.cast(dict[str, t.Any], schema.get("items") or {"type": "string"})
         normalized, nullable = _normalize_nullable_schema(items, log=log)
-        element_id = id_gen.next()
+        element_id = next_id()
         element_type = _jsonschema_to_iceberg_type(
             normalized,
-            id_gen=id_gen,
+            next_id=next_id,
             sanitize_names=sanitize_names,
             log=log,
         )
@@ -691,9 +714,9 @@ def _jsonschema_to_iceberg_type(
                     _jsonschema_to_nested_field(
                         name=child_name,
                         schema=child_schema,
-                        field_id=id_gen.next(),
+                        field_id=next_id(),
                         required_in_parent=source_name in required,
-                        id_gen=id_gen,
+                        next_id=next_id,
                         sanitize_names=sanitize_names,
                         log=log,
                     ),
@@ -711,11 +734,11 @@ def _jsonschema_to_iceberg_type(
         else:
             value_schema = t.cast(dict[str, t.Any], additional)
         normalized_value, value_nullable = _normalize_nullable_schema(value_schema, log=log)
-        key_id = id_gen.next()
-        value_id = id_gen.next()
+        key_id = next_id()
+        value_id = next_id()
         value_type = _jsonschema_to_iceberg_type(
             normalized_value,
-            id_gen=id_gen,
+            next_id=next_id,
             sanitize_names=sanitize_names,
             log=log,
         )
@@ -732,6 +755,7 @@ def _jsonschema_to_iceberg_type(
 
 
 def is_table_partitioned(table: Table) -> bool:
+    """Return True if the Iceberg table has a non-empty partition spec."""
     try:
         spec = table.spec()
         fields = getattr(spec, "fields", None)
@@ -748,6 +772,7 @@ def write_arrow_to_table(
     config: ParsedConfig,
     log: logging.Logger,
 ) -> None:
+    """Append or overwrite an Iceberg table using a PyArrow table."""
     snapshot_props = config.snapshot_properties or None
 
     def _append() -> None:

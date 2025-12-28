@@ -105,7 +105,9 @@ class TargetS3Tables(Target):
             th.StringType,
             nullable=True,
             default=None,
-            description="Glue warehouse string: <account-id>:s3tablescatalog/<table-bucket-name>.",
+            description=(
+                "Glue warehouse string: <account-id>:s3tablescatalog/<table-bucket-name>."
+            ),
         ),
         th.Property(
             "account_id",
@@ -119,7 +121,9 @@ class TargetS3Tables(Target):
             th.StringType,
             nullable=True,
             default=None,
-            description="S3 Tables table bucket name (used to build glue_warehouse if not provided).",
+            description=(
+                "S3 Tables table bucket name (used to build glue_warehouse if not provided)."
+            ),
         ),
         # S3 Tables REST direct mode:
         th.Property(
@@ -127,14 +131,19 @@ class TargetS3Tables(Target):
             th.StringType,
             nullable=True,
             default=None,
-            description="S3 Tables Iceberg REST endpoint URI. Defaults to https://s3tables.<region>.amazonaws.com/iceberg.",
+            description=(
+                "S3 Tables Iceberg REST endpoint URI. "
+                "Defaults to https://s3tables.<region>.amazonaws.com/iceberg."
+            ),
         ),
         th.Property(
             "table_bucket_arn",
             th.StringType,
             nullable=True,
             default=None,
-            description="Table bucket ARN: arn:aws:s3tables:<region>:<accountID>:bucket/<bucketname>.",
+            description=(
+                "Table bucket ARN: arn:aws:s3tables:<region>:<accountID>:bucket/<bucketname>."
+            ),
         ),
         # SigV4:
         th.Property(
@@ -163,7 +172,10 @@ class TargetS3Tables(Target):
             th.StringType,
             nullable=True,
             default=None,
-            description="Optional AWS access key id override (otherwise use default AWS credential chain).",
+            description=(
+                "Optional AWS access key id override "
+                "(otherwise use default AWS credential chain)."
+            ),
         ),
         th.Property(
             "aws_secret_access_key",
@@ -171,7 +183,10 @@ class TargetS3Tables(Target):
             nullable=True,
             default=None,
             secret=True,
-            description="Optional AWS secret access key override (otherwise use default AWS credential chain).",
+            description=(
+                "Optional AWS secret access key override "
+                "(otherwise use default AWS credential chain)."
+            ),
         ),
         th.Property(
             "aws_session_token",
@@ -215,6 +230,11 @@ class TargetS3Tables(Target):
         super().__init__(*args, **kwargs)
         apply_aws_env_overrides(self.config)
         _set_log_level_from_config(self.config)
+
+    @property
+    def state(self) -> t.Mapping[str, t.Any]:
+        """Return the latest Singer state seen by the target."""
+        return self._latest_state or {}
 
     def _validate_config(self, *, raise_errors: bool = True) -> list[str]:
         errors = super()._validate_config(raise_errors=False)

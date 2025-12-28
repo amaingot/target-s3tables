@@ -48,12 +48,14 @@ def parse_s3tables_bucket_arn(arn: str) -> dict[str, str]:
 
 
 def validate_aws_account_id(account_id: str) -> None:
+    """Validate an AWS account ID (12 digits)."""
     if not _ACCOUNT_ID_RE.match(account_id):
         msg = "Invalid `account_id`. Expected a 12-digit AWS account ID."
         raise ValueError(msg)
 
 
 def validate_glue_warehouse(warehouse: str) -> None:
+    """Validate an AWS Glue Iceberg REST warehouse string."""
     # Example: 123456789012:s3tablescatalog/my-table-bucket
     if not re.match(r"^\d{12}:s3tablescatalog\/.+$", warehouse):
         msg = (
@@ -64,6 +66,7 @@ def validate_glue_warehouse(warehouse: str) -> None:
 
 
 def validate_namespace(*, namespace: str, catalog_mode: CatalogMode) -> None:
+    """Validate an Iceberg namespace for the selected catalog mode."""
     if not namespace or not namespace.strip():
         raise ValueError("Invalid `namespace`. Must be a non-empty string.")
 
@@ -76,6 +79,7 @@ def validate_namespace(*, namespace: str, catalog_mode: CatalogMode) -> None:
 
 
 def validate_aws_creds(config: t.Mapping[str, t.Any]) -> None:
+    """Validate optional static AWS credentials, if provided."""
     access_key = config.get("aws_access_key_id")
     secret_key = config.get("aws_secret_access_key")
     session_token = config.get("aws_session_token")
@@ -103,7 +107,7 @@ def apply_aws_env_overrides(config: t.Mapping[str, t.Any]) -> None:
 
 
 @dataclass(frozen=True)
-class ParsedConfig:
+class ParsedConfig:  # pylint: disable=too-many-instance-attributes
     """Parsed and normalized plugin configuration."""
 
     catalog_mode: CatalogMode
@@ -141,6 +145,7 @@ class ParsedConfig:
 
     @classmethod
     def from_mapping(cls, config: t.Mapping[str, t.Any]) -> ParsedConfig:
+        """Parse and normalize a raw Singer SDK config mapping."""
         catalog_mode = t.cast(CatalogMode, config.get("catalog_mode", "glue_rest"))
         region = t.cast(str, config.get("region"))
         namespace = t.cast(str, config.get("namespace", "default"))
@@ -178,9 +183,12 @@ class ParsedConfig:
             sigv4_enabled=sigv4_enabled,
             signing_name=signing_name,
             signing_region=signing_region,
-            table_properties={str(k): str(v) for k, v in (config.get("table_properties") or {}).items()},
+            table_properties={
+                str(k): str(v) for k, v in (config.get("table_properties") or {}).items()
+            },
             snapshot_properties={
-                str(k): str(v) for k, v in (config.get("snapshot_properties") or {}).items()
+                str(k): str(v)
+                for k, v in (config.get("snapshot_properties") or {}).items()
             },
             debug_http=bool(config.get("debug_http", False)),
         )

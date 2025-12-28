@@ -25,7 +25,10 @@ class S3TablesSink(BatchSink):
     def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
         super().__init__(*args, **kwargs)
         self._parsed_config = ParsedConfig.from_mapping(self.config)
-        self._table_id = table_identifier_for_stream(self._parsed_config, stream_name=self.stream_name)
+        self._table_id = table_identifier_for_stream(
+            self._parsed_config,
+            stream_name=self.stream_name,
+        )
         self._catalog: t.Any | None = None
         self._table: t.Any | None = None
 
@@ -79,7 +82,11 @@ class S3TablesSink(BatchSink):
         table = self._ensure_table()
 
         if self._parsed_config.evolve_schema:
-            evolve_table_schema_union_by_name(table, arrow_schema=self._arrow_schema, log=self.logger)
+            evolve_table_schema_union_by_name(
+                table,
+                arrow_schema=self._arrow_schema,
+                log=self.logger,
+            )
 
         arrow_table = records_to_arrow_table(
             records,
@@ -94,7 +101,12 @@ class S3TablesSink(BatchSink):
             self._parsed_config.write_mode,
         )
         try:
-            write_arrow_to_table(table, arrow_table=arrow_table, config=self._parsed_config, log=self.logger)
+            write_arrow_to_table(
+                table,
+                arrow_table=arrow_table,
+                config=self._parsed_config,
+                log=self.logger,
+            )
         except Exception as exc:  # noqa: BLE001
             if _is_auth_error(exc):
                 raise RuntimeError(_auth_hint(self._parsed_config)) from exc
