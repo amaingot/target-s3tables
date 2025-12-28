@@ -107,6 +107,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --frozen
+          uv tool install meltano
 
       - name: Run Meltano
         run: |
@@ -159,6 +160,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --frozen
+          uv tool install meltano
 
       - name: Run Meltano
         run: |
