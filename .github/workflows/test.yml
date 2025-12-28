@@ -1,4 +1,4 @@
-name: Test target-s3tables
+name: 🧪 Test
 
 on:
   push:
@@ -30,7 +30,7 @@ permissions:
 
 jobs:
   pytest:
-    name: Unit Tests / Glue Rest / Python ${{ matrix.python-version }}
+    name: 🧪 Unit Tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,25 +42,25 @@ jobs:
           - "3.13"
           - "3.14"
     steps:
-      - name: Checkout repository
+      - name: 🏗 Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: 🏗 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Setup uv
+      - name: 🏗 Setup uv
         uses: astral-sh/setup-uv@v7
         with:
           version: ">=0.8"
 
-      - name: Run Tox
+      - name: ▶️ Run Tox
         run: |
           uvx --with=tox-uv tox -e ${{ matrix.python-version }}
 
   integration_tests_glue_rest:
-    name: Integration Tests / Glue Rest / Python ${{ matrix.python-version }}
+    name: 🧪 Integration Tests / Glue Rest / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -85,41 +85,41 @@ jobs:
           - "3.13"
           - "3.14"
     steps:
-      - name: Checkout repository
+      - name: 🏗 Checkout repository
         uses: actions/checkout@v6
 
-      - name: Configure AWS Credentials
+      - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ROLE_NAME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: 🏗 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Setup uv
+      - name: 🏗 Setup uv
         uses: astral-sh/setup-uv@v7
         with:
           version: ">=0.8"
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: |
           uv sync --frozen
           uv tool install meltano
 
-      - name: Set table name prefix
+      - name: ⚙️ Set table name prefix
         run: |
           # The table name prefix is set to be the python version with the '.' removed
           echo "TARGET_S3TABLES_TABLE_NAME_PREFIX=glue_rest_$(echo ${{ matrix.python-version }} | tr -d '.')" >> $GITHUB_ENV
 
-      - name: Run Meltano
+      - name: ▶️ Run Meltano
         run: |
           meltano run tap-smoke-test target-s3tables
 
   integration_tests_s3tables_rest:
-    name: Integration Tests / S3Tables Rest / Python ${{ matrix.python-version }}
+    name: 🧪 Integration Tests / S3Tables Rest / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,56 +143,56 @@ jobs:
           - "3.13"
           - "3.14"
     steps:
-      - name: Checkout repository
+      - name: 🏗 Checkout repository
         uses: actions/checkout@v6
 
-      - name: Configure AWS Credentials
+      - name: 🔐 Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ROLE_NAME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: 🏗 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Setup uv
+      - name: 🏗 Setup uv
         uses: astral-sh/setup-uv@v7
         with:
           version: ">=0.8"
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: |
           uv sync --frozen
           uv tool install meltano
 
-      - name: Set table name prefix
+      - name: ⚙️ Set table name prefix
         run: |
           # The table name prefix is set to be the python version with the '.' removed
           echo "TARGET_S3TABLES_TABLE_NAME_PREFIX=s3tables_rest_$(echo ${{ matrix.python-version }} | tr -d '.')" >> $GITHUB_ENV
 
-      - name: Run Meltano
+      - name: ▶️ Run Meltano
         run: |
           meltano run tap-smoke-test target-s3tables
 
   typing:
-    name: Type Checking
+    name: ☑️ Type Checking
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: 🏗 Checkout repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
+      - name: 🏗 Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: 3.x
 
-      - name: Setup uv
+      - name: 🏗 Setup uv
         uses: astral-sh/setup-uv@v7
         with:
           version: ">=0.8"
 
-      - name: Run Tox
+      - name: ▶️ Run Tox
         run: |
           uvx --with=tox-uv tox -e typing
