@@ -109,6 +109,11 @@ jobs:
           uv sync --frozen
           uv tool install meltano
 
+      - name: Set table name prefix
+        run: |
+          # The table name prefix is set to be the python version with the '.' removed
+          echo "TARGET_S3TABLES_TABLE_NAME_PREFIX=glue_rest_$(echo ${{ matrix.python-version }} | tr -d '.')" >> $GITHUB_ENV
+
       - name: Run Meltano
         run: |
           meltano run tap-smoke-test target-s3tables
@@ -161,6 +166,11 @@ jobs:
         run: |
           uv sync --frozen
           uv tool install meltano
+
+      - name: Set table name prefix
+        run: |
+          # The table name prefix is set to be the python version with the '.' removed
+          echo "TARGET_S3TABLES_TABLE_NAME_PREFIX=s3tables_rest_$(echo ${{ matrix.python-version }} | tr -d '.')" >> $GITHUB_ENV
 
       - name: Run Meltano
         run: |
