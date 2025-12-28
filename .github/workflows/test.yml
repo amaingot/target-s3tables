@@ -29,7 +29,7 @@ permissions:
   id-token: write # Needed for AWS OIDC authentication
 
 jobs:
-  pytest:
+  unit_tests:
     name: 🧪 Unit Tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
@@ -176,7 +176,7 @@ jobs:
         run: |
           meltano run tap-smoke-test target-s3tables
 
-  typing:
+  type_check:
     name: ☑️ Type Checking
     runs-on: ubuntu-latest
     steps:
