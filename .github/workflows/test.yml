@@ -25,6 +25,9 @@ concurrency:
 env:
   FORCE_COLOR: 1
 
+permissions:
+  id-token: write # Needed for AWS OIDC authentication
+
 jobs:
   pytest:
     name: Unit Tests / Glue Rest / Python ${{ matrix.python-version }}
