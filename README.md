@@ -100,6 +100,28 @@ tap-smoke-test | target-s3tables --config=ENV
 
 If you write to an existing **partitioned** table and `append` fails, the target raises a message with options (unpartitioned tables, dynamic partition overwrite for compatible cases, or another engine).
 
+## Nullability notes (maps/arrays)
+
+- Top-level column nullability follows Singer JSON Schema: fields listed in `required` and not declared nullable (e.g. `"type": ["null", ...]`) become **required** Iceberg columns; everything else becomes **optional**.
+- Singer `object` fields without explicit `properties` are treated as Iceberg `map<string, ...>` columns:
+  - If `additionalProperties` is omitted/`true`/`{}`, values are treated as **nullable strings** (`map<string, string?>`).
+  - If you specify a non-nullable value schema (e.g. `{"additionalProperties": {"type": "string"}}`) and the tap emits null map values, those key/value pairs are **dropped** to satisfy the declared schema.
+- For arrays with non-nullable `items`, null elements are **dropped**.
+
+### Troubleshooting: `ArrowInvalid` on maps
+
+If you see:
+
+```
+pyarrow.lib.ArrowInvalid: Can't view array of type map<...> as map<...>: nulls in input cannot be viewed as non-nullable
+```
+
+it means your records contain nulls inside a map, but the table/schema says the map values are non-nullable. Fix by:
+
+- Updating to a version of `target-s3tables` which treats untyped `object` maps as nullable values (and keeping `evolve_schema=true` for existing tables), or
+- Adjusting the stream schema to allow null map values (e.g. `{"type": ["null", "string"]}` for `additionalProperties`), or
+- Ensuring the tap never emits null map values.
+
 ## Meltano (custom loader plugin)
 
 Add to `meltano.yml`:
