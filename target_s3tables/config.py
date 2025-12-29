@@ -24,10 +24,12 @@ def _as_bool_str(value: bool) -> str:
 
 
 def _default_glue_uri(region: str) -> str:
+    """Return the default AWS Glue Iceberg REST URI for a given region."""
     return f"https://glue.{region}.amazonaws.com/iceberg"
 
 
 def _default_s3tables_uri(region: str) -> str:
+    """Return the default S3 Tables Iceberg REST URI for a given region."""
     return f"https://s3tables.{region}.amazonaws.com/iceberg"
 
 
@@ -211,6 +213,7 @@ class ParsedConfig:  # pylint: disable=too-many-instance-attributes
         return props
 
     def _rest_uri_warehouse_prefix(self) -> tuple[str, str, str | None]:
+        """Return the REST URI, warehouse, and optional prefix for the catalog."""
         if self.catalog_mode == "glue_rest":
             warehouse = self.glue_warehouse or self._build_glue_warehouse()
             return self.glue_uri, warehouse, None
@@ -224,6 +227,7 @@ class ParsedConfig:  # pylint: disable=too-many-instance-attributes
         return self.s3tables_uri, self.table_bucket_arn, prefix
 
     def _build_glue_warehouse(self) -> str:
+        """Build the AWS Glue warehouse string."""
         if self.glue_warehouse:
             return self.glue_warehouse
         if not self.account_id or not self.table_bucket_name:

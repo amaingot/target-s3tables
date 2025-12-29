@@ -107,6 +107,7 @@ def retry(  # noqa: PLR0913
 
 
 def _is_retriable_exception(exc: Exception) -> bool:
+    """Determine if an exception is transient and should be retried."""
     status_code = getattr(exc, "status_code", None)
     if status_code is None and hasattr(exc, "response"):
         status_code = getattr(getattr(exc, "response"), "status_code", None)

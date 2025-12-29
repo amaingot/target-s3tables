@@ -1,24 +1,21 @@
-### A CI workflow template that runs linting and python testing
-### TODO: Modify as needed or as desired.
-
-name: Test target-s3tables
+name: 🧪 Test
 
 on:
   push:
     branches: [main]
     paths:
-    - .github/workflows/test.yml
-    - target_s3tables/**
-    - tests/**
-    - pyproject.toml
-    - uv.lock
+      - .github/workflows/test.yml
+      - target_s3tables/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
   pull_request:
     paths:
-    - .github/workflows/test.yml
-    - target_s3tables/**
-    - tests/**
-    - pyproject.toml
-    - uv.lock
+      - .github/workflows/test.yml
+      - target_s3tables/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
   workflow_dispatch:
 
 concurrency:
@@ -28,46 +25,174 @@ concurrency:
 env:
   FORCE_COLOR: 1
 
+permissions:
+  id-token: write # Needed for AWS OIDC authentication
+
 jobs:
-  pytest:
-    name: Integration Tests / Python ${{ matrix.python-version }}
+  unit_tests:
+    name: 🧪 Unit Tests / Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version:
-        - "3.10"
-        - "3.11"
-        - "3.12"
-        - "3.13"
-        - "3.14"
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Setup uv
-      uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
-      with:
-        version: ">=0.8"
-    - name: Run Tox
-      run: |
-        uvx --with=tox-uv tox -e ${{ matrix.python-version }}
+      - name: 🏗 Checkout repository
+        uses: actions/checkout@v6
 
-  typing:
-    name: Type Checking
+      - name: 🏗 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 🏗 Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ">=0.8"
+
+      - name: ▶️ Run Tox
+        run: |
+          uvx --with=tox-uv tox -e ${{ matrix.python-version }}
+
+  integration_tests_glue_rest:
+    name: 🧪 Integration Tests / Glue Rest / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SINGER_SDK_LOG_CONFIG: ./target_s3tables_logging.yaml
+      TARGET_S3TABLES_CATALOG_MODE: glue_rest
+      TARGET_S3TABLES_REGION: ${{ secrets.AWS_REGION }}
+      TARGET_S3TABLES_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      TARGET_S3TABLES_TABLE_BUCKET_NAME: ${{ secrets.S3TABLES_TABLE_BUCKET_NAME }}
+      TARGET_S3TABLES_NAMESPACE: default
+      TARGET_S3TABLES_WRITE_MODE: append
+      TARGET_S3TABLES_BATCH_SIZE_ROWS: 5000
+      TARGET_S3TABLES_SANITIZE_NAMES: true
+      TARGET_S3TABLES_CREATE_TABLES: true
+      TARGET_S3TABLES_EVOLVE_SCHEMA: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+    steps:
+      - name: 🏗 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🔐 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🏗 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 🏗 Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ">=0.8"
+
+      - name: 📦 Install dependencies
+        run: |
+          uv sync --frozen
+          uv tool install meltano
+
+      - name: ⚙️ Set table name prefix
+        run: |
+          # The table name prefix is set to be the python version with the '.' removed
+          echo "TARGET_S3TABLES_TABLE_NAME_PREFIX=glue_rest_$(echo ${{ matrix.python-version }} | tr -d '.')" >> $GITHUB_ENV
+
+      - name: ▶️ Run Meltano
+        run: |
+          meltano run tap-smoke-test target-s3tables
+
+  integration_tests_s3tables_rest:
+    name: 🧪 Integration Tests / S3Tables Rest / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SINGER_SDK_LOG_CONFIG: ./target_s3tables_logging.yaml
+      TARGET_S3TABLES_CATALOG_MODE: s3tables_rest
+      TARGET_S3TABLES_TABLE_BUCKET_ARN: arn:aws:s3tables:${{ secrets.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:bucket/${{ secrets.S3TABLES_TABLE_BUCKET_NAME }}
+      TARGET_S3TABLES_REGION: ${{ secrets.AWS_REGION }}
+      TARGET_S3TABLES_NAMESPACE: default
+      TARGET_S3TABLES_WRITE_MODE: append
+      TARGET_S3TABLES_BATCH_SIZE_ROWS: 5000
+      TARGET_S3TABLES_SANITIZE_NAMES: true
+      TARGET_S3TABLES_CREATE_TABLES: true
+      TARGET_S3TABLES_EVOLVE_SCHEMA: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+    steps:
+      - name: 🏗 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🔐 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🏗 Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 🏗 Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ">=0.8"
+
+      - name: 📦 Install dependencies
+        run: |
+          uv sync --frozen
+          uv tool install meltano
+
+      - name: ⚙️ Set table name prefix
+        run: |
+          # The table name prefix is set to be the python version with the '.' removed
+          echo "TARGET_S3TABLES_TABLE_NAME_PREFIX=s3tables_rest_$(echo ${{ matrix.python-version }} | tr -d '.')" >> $GITHUB_ENV
+
+      - name: ▶️ Run Meltano
+        run: |
+          meltano run tap-smoke-test target-s3tables
+
+  type_check:
+    name: ☑️ Type Checking
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-    - name: Set up Python
-      uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548 # v6.1.0
-      with:
-        python-version: 3.x
-    - name: Setup uv
-      uses: astral-sh/setup-uv@681c641aba71e4a1c380be3ab5e12ad51f415867 # v7.1.6
-      with:
-        version: ">=0.8"
-    - name: Run Tox
-      run: |
-        uvx --with=tox-uv tox -e typing
+      - name: 🏗 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 🏗 Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+
+      - name: 🏗 Setup uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ">=0.8"
+
+      - name: ▶️ Run Tox
+        run: |
+          uvx --with=tox-uv tox -e typing

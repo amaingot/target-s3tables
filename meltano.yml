@@ -3,73 +3,78 @@ project_id: "target-s3tables"
 default_environment: test
 requires_meltano: ">=4.0"
 environments:
-- name: test
+  - name: test
 plugins:
   extractors:
-  - name: tap-smoke-test
-    variant: meltano
-    pip_url: git+https://github.com/meltano/tap-smoke-test.git
-    config:
-      streams:
-      - stream_name: animals
-        input_filename: https://raw.githubusercontent.com/meltano/tap-smoke-test/main/demo-data/animals-data.jsonl
+    - name: tap-smoke-test
+      variant: meltano
+      pip_url: git+https://github.com/meltano/tap-smoke-test.git
+      config:
+        streams:
+          - stream_name: animals
+            input_filename: https://raw.githubusercontent.com/meltano/tap-smoke-test/main/demo-data/animals-data.jsonl
 
   loaders:
-  - name: "target-s3tables"
-    namespace: "target_s3tables"
-    pip_url: -e .
-    capabilities:
-    - about
-    - stream-maps
-    - schema-flattening
-    - structured-logging
+    - name: "target-s3tables"
+      namespace: "target_s3tables"
+      pip_url: -e .
+      capabilities:
+        - about
+        - stream-maps
+        - schema-flattening
+        - structured-logging
 
-    # Settings are validated by the target at runtime. For `glue_rest` mode, either set
-    # `glue_warehouse` or provide `account_id` + `table_bucket_name`.
-    settings:
-    - name: catalog_mode
-      kind: string
-      label: Catalog Mode
-      description: "glue_rest (recommended) or s3tables_rest (direct)."
-      value: glue_rest
+      # Settings are validated by the target at runtime. For `glue_rest` mode, either set
+      # `glue_warehouse` or provide `account_id` + `table_bucket_name`.
+      settings:
+        - name: catalog_mode
+          kind: string
+          label: Catalog Mode
+          description: "glue_rest (recommended) or s3tables_rest (direct)."
+          value: glue_rest
 
-    - name: region
-      kind: string
-      label: AWS Region
-      description: AWS region (e.g. us-east-1).
+        - name: region
+          kind: string
+          label: AWS Region
+          description: AWS region (e.g. us-east-1).
 
-    - name: namespace
-      kind: string
-      label: Namespace
-      description: Iceberg namespace (database).
-      value: default
+        - name: namespace
+          kind: string
+          label: Namespace
+          description: Iceberg namespace (database).
+          value: default
 
-    - name: account_id
-      kind: string
-      label: AWS Account ID
-      description: 12-digit AWS account id (used for glue_rest warehouse construction).
+        - name: table_name_prefix
+          kind: string
+          label: Table Name Prefix
+          description: Prefix applied to all Iceberg table names.
 
-    - name: table_bucket_name
-      kind: string
-      label: Table Bucket Name
-      description: S3 Tables table bucket name (used for glue_rest warehouse construction).
+        - name: account_id
+          kind: string
+          label: AWS Account ID
+          description: 12-digit AWS account id (used for glue_rest warehouse construction).
 
-    - name: table_bucket_arn
-      kind: string
-      label: Table Bucket ARN
-      description: S3 Tables table bucket ARN (required for s3tables_rest).
+        - name: table_bucket_name
+          kind: string
+          label: Table Bucket Name
+          description: S3 Tables table bucket name (used for glue_rest warehouse construction).
 
-    - name: write_mode
-      kind: string
-      label: Write Mode
-      description: append or overwrite.
-      value: append
+        - name: table_bucket_arn
+          kind: string
+          label: Table Bucket ARN
+          description: S3 Tables table bucket ARN (required for s3tables_rest).
 
-    - name: batch_size_rows
-      kind: integer
-      label: Batch Size Rows
-      description: Max rows per Iceberg commit.
-      value: 5000
+        - name: write_mode
+          kind: string
+          label: Write Mode
+          description: append or overwrite.
+          value: append
 
-    settings_group_validation:
-    - [region]
+        - name: batch_size_rows
+          kind: integer
+          label: Batch Size Rows
+          description: Max rows per Iceberg commit.
+          value: 5000
+
+      settings_group_validation:
+        - [region]

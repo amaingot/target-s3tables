@@ -263,6 +263,20 @@ wheels = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.41.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5b/81/450cd4143864959264a3d80f9246175a20de8c1e50ec889c710eaa28cdd9/boto3-1.41.5.tar.gz", hash = "sha256:bc7806bee681dfdff2fe2b74967b107a56274f1e66ebe4d20dc8eee1ea408d17", size = 111594, upload-time = "2025-11-26T20:27:47.021Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/56/f47a80254ed4991cce9a2f6d8ae8aafbc8df1c3270e966b2927289e5a12f/boto3-1.41.5-py3-none-any.whl", hash = "sha256:bb278111bfb4c33dca8342bda49c9db7685e43debbfa00cc2a5eb854dd54b745", size = 139344, upload-time = "2025-11-26T20:27:45.571Z" },
+]
+
+[[package]]
 name = "botocore"
 version = "1.41.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1536,6 +1550,31 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/b3/c012dc6b5bc3d0a84821936789c753f5c44aec619b64fbcf7f90038d172e/pyiceberg-0.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:33367c84bcb0a2fbbe54cbbfe062691ab93b91a2e3d319bb546ec5b9b45b6057", size = 617722, upload-time = "2025-09-11T14:59:23.67Z" },
 ]
 
+[package.optional-dependencies]
+glue = [
+    { name = "boto3" },
+]
+pyarrow = [
+    { name = "pyarrow" },
+    { name = "pyiceberg-core" },
+]
+s3fs = [
+    { name = "s3fs" },
+]
+
+[[package]]
+name = "pyiceberg-core"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/80/06bd9159cacd80797122a88d65e8d3377fb76f00f1b23eeefe4ab0d85f4d/pyiceberg_core-0.6.0.tar.gz", hash = "sha256:ce2cac8cf8a85da6e682cec032165fcf387256257971f0f84bc6d50c0941f261", size = 457209, upload-time = "2025-07-30T09:20:23.447Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/8b/7ff908f6f18bc3d6351d9f4334d6a299eb7f1975b0bacb061d73b3292c1c/pyiceberg_core-0.6.0-cp39-abi3-macosx_10_12_x86_64.macosx_11_0_arm64.macosx_10_12_universal2.whl", hash = "sha256:2f228a54a2a69912378be18f98ea866bb4a08d265c875856f99cd81f2f7299ba", size = 55132736, upload-time = "2025-07-30T09:20:07.91Z" },
+    { url = "https://files.pythonhosted.org/packages/57/09/ee720f4811fd4323a45d9d7bebcfd5d99283cf45092bccea87787a06bdff/pyiceberg_core-0.6.0-cp39-abi3-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:edb41a1f182774085b11352a1f44955d561e21453f00973021244471873fbbd7", size = 30041729, upload-time = "2025-07-30T09:20:13.056Z" },
+    { url = "https://files.pythonhosted.org/packages/37/cd/94095aa2282ebe716e0a12130760b51076b1c921285574b1f88e5f63e234/pyiceberg_core-0.6.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5cf869d225d57254a54bc3778841cffea4193319bc0a849767a15e05e75c9b36", size = 30566511, upload-time = "2025-07-30T09:20:15.596Z" },
+    { url = "https://files.pythonhosted.org/packages/87/62/7971cc8b090e51448da8d59e411be7b752a3a2abb1365e760871f27611e7/pyiceberg_core-0.6.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:18c12fe1ac5b4725b673cf0d1d0ab3e9475644ac0dae871a2e9a293c2622f0a8", size = 29570254, upload-time = "2025-07-30T09:20:18.371Z" },
+    { url = "https://files.pythonhosted.org/packages/29/40/96bd273520075ee10718eeb609e92d44ee0b7701b5c225eae505a38fb22d/pyiceberg_core-0.6.0-cp39-abi3-win_amd64.whl", hash = "sha256:d3249eeae5e1d1f1d2c8bd8d6eced98da002afa7c48c751cb22d8dbd4b091a1e", size = 25815921, upload-time = "2025-07-30T09:20:20.781Z" },
+]
+
 [[package]]
 name = "pylint"
 version = "4.0.4"
@@ -1931,6 +1970,18 @@ wheels = [
 ]
 
 [[package]]
+name = "s3transfer"
+version = "0.15.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ca/bb/940d6af975948c1cc18f44545ffb219d3c35d78ec972b42ae229e8e37e08/s3transfer-0.15.0.tar.gz", hash = "sha256:d36fac8d0e3603eff9b5bfa4282c7ce6feb0301a633566153cbd0b93d11d8379", size = 152185, upload-time = "2025-11-20T20:28:56.327Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/e1/5ef25f52973aa12a19cf4e1375d00932d7fb354ffd310487ba7d44225c1a/s3transfer-0.15.0-py3-none-any.whl", hash = "sha256:6f8bf5caa31a0865c4081186689db1b2534cef721d104eb26101de4b9d6a5852", size = 85984, upload-time = "2025-11-20T20:28:55.046Z" },
+]
+
+[[package]]
 name = "simpleeval"
 version = "1.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2116,11 +2167,12 @@ wheels = [
 
 [[package]]
 name = "target-s3tables"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "pyarrow" },
-    { name = "pyiceberg" },
+    { name = "pyiceberg", extra = ["glue", "pyarrow", "s3fs"] },
     { name = "requests" },
     { name = "s3fs" },
     { name = "singer-sdk" },
@@ -2147,8 +2199,9 @@ typing = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.41.5" },
     { name = "pyarrow", specifier = ">=15" },
-    { name = "pyiceberg", specifier = ">=0.10.0" },
+    { name = "pyiceberg", extras = ["glue", "pyarrow", "s3fs"], specifier = ">=0.10.0" },
     { name = "requests", specifier = "~=2.32.3" },
     { name = "s3fs", specifier = "~=2025.12.0" },
     { name = "singer-sdk", specifier = "~=0.53.4" },

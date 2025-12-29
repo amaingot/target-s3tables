@@ -25,8 +25,9 @@ dependencies = [
     "singer-sdk~=0.53.4",
     "requests~=2.32.3",
     "pyarrow>=15",
-    "pyiceberg>=0.10.0",
+    "pyiceberg[glue,pyarrow,s3fs]>=0.10.0",
     "s3fs~=2025.12.0",
+    "boto3>=1.41.5",
 ]
 
 [project.scripts]
