@@ -109,3 +109,58 @@ def test_records_to_arrow_table_coerces_datetime_like_strings() -> None:
     assert table.column("d")[0].as_py() == dt.date(2025, 1, 1)
     assert table.column("t")[0].as_py() == dt.time(12, 34, 56)
 
+
+def test_object_without_properties_defaults_to_nullable_string_map_values() -> None:
+    singer_schema = {
+        "type": "object",
+        "properties": {
+            "attrs": {"type": "object"},
+        },
+    }
+
+    arrow_schema, _ = singer_schema_to_arrow_schema(
+        singer_schema,
+        sanitize_names=False,
+        log=logging.getLogger("test"),
+    )
+    attrs_field = arrow_schema.field("attrs")
+    assert pa.types.is_map(attrs_field.type)
+    assert attrs_field.type.item_field.type == pa.string()
+    assert attrs_field.type.item_field.nullable is True
+
+    iceberg_schema = singer_schema_to_iceberg_schema(
+        singer_schema,
+        sanitize_names=False,
+        log=logging.getLogger("test"),
+    )
+    attrs_iceberg_type = iceberg_schema.find_field("attrs").field_type
+    assert getattr(attrs_iceberg_type, "type", None) == "map"
+    assert getattr(attrs_iceberg_type, "value_required", True) is False
+
+
+def test_records_to_arrow_table_drops_null_map_values_when_non_nullable() -> None:
+    singer_schema = {
+        "type": "object",
+        "properties": {
+            "attrs": {"type": "object", "additionalProperties": {"type": "string"}},
+        },
+    }
+    arrow_schema, specs = singer_schema_to_arrow_schema(
+        singer_schema,
+        sanitize_names=False,
+        log=logging.getLogger("test"),
+    )
+
+    table = records_to_arrow_table(
+        [
+            {"attrs": {"a": None, "b": "x"}},
+        ],
+        arrow_schema=arrow_schema,
+        specs=specs,
+    )
+
+    # Map scalars convert to list-of-tuples. Ensure the null value was dropped.
+    assert dict(table.column("attrs")[0].as_py()) == {"b": "x"}
+
+    # Ensure the map can be viewed as non-nullable (regression for ArrowInvalid on map views).
+    table.column("attrs").chunk(0).view(arrow_schema.field("attrs").type)

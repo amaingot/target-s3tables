@@ -405,9 +405,18 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
 
         value_schema: dict[str, t.Any]
         if additional is True or additional is None:
-            value_schema = {"type": "string"}
+            # In JSON Schema, unspecified/true additionalProperties means values may be any JSON type,
+            # including null. Default to a nullable string representation.
+            value_schema = {"type": ["null", "string"]}
+        elif isinstance(additional, dict):
+            # When additionalProperties is an untyped schema (e.g. {}), values may be any JSON type
+            # including null. Default to a nullable string representation.
+            if not any(k in additional for k in ("type", "anyOf", "oneOf")):
+                value_schema = {"type": ["null", "string"]}
+            else:
+                value_schema = t.cast(dict[str, t.Any], additional)
         else:
-            value_schema = t.cast(dict[str, t.Any], additional)
+            value_schema = {"type": ["null", "string"]}
         value_spec = _jsonschema_to_fieldspec(
             source_name=f"{source_name}{{}}",
             target_name="value",
@@ -506,11 +515,19 @@ def _coerce_record(record: dict[str, t.Any], specs: tuple[FieldSpec, ...]) -> di
 # pylint: disable-next=too-many-branches,too-many-return-statements
 def _coerce_value(value: t.Any, spec: FieldSpec) -> t.Any:  # noqa: ANN401, PLR0911
     if value is None:
+        if spec.nullable:
+            return None
+        if spec.kind == "struct":
+            return {}
+        if spec.kind == "list":
+            return []
+        if spec.kind == "map":
+            return {}
         return None
 
     if spec.kind == "struct":
         if not isinstance(value, dict):
-            return None
+            return {} if not spec.nullable else None
         out: dict[str, t.Any] = {}
         for child in spec.children:
             out[child.target_name] = _coerce_value(value.get(child.source_name), child)
@@ -518,15 +535,27 @@ def _coerce_value(value: t.Any, spec: FieldSpec) -> t.Any:  # noqa: ANN401, PLR0
 
     if spec.kind == "list":
         if not isinstance(value, list):
-            return None
+            return [] if not spec.nullable else None
         assert spec.element is not None
-        return [_coerce_value(v, spec.element) for v in value]
+        out_list: list[t.Any] = []
+        for v in value:
+            coerced = _coerce_value(v, spec.element)
+            if coerced is None and not spec.element.nullable:
+                continue
+            out_list.append(coerced)
+        return out_list
 
     if spec.kind == "map":
         if not isinstance(value, dict):
-            return None
+            return {} if not spec.nullable else None
         assert spec.map_value is not None
-        return {str(k): _coerce_value(v, spec.map_value) for k, v in value.items()}
+        out_map: dict[str, t.Any] = {}
+        for k, v in value.items():
+            coerced = _coerce_value(v, spec.map_value)
+            if coerced is None and not spec.map_value.nullable:
+                continue
+            out_map[str(k)] = coerced
+        return out_map
 
     # Primitives:
     arrow_type = spec.arrow_type
@@ -731,9 +760,18 @@ def _jsonschema_to_iceberg_type(
 
         value_schema: dict[str, t.Any]
         if additional is True or additional is None:
-            value_schema = {"type": "string"}
+            # In JSON Schema, unspecified/true additionalProperties means values may be any JSON type,
+            # including null. Default to a nullable string representation.
+            value_schema = {"type": ["null", "string"]}
+        elif isinstance(additional, dict):
+            # When additionalProperties is an untyped schema (e.g. {}), values may be any JSON type
+            # including null. Default to a nullable string representation.
+            if not any(k in additional for k in ("type", "anyOf", "oneOf")):
+                value_schema = {"type": ["null", "string"]}
+            else:
+                value_schema = t.cast(dict[str, t.Any], additional)
         else:
-            value_schema = t.cast(dict[str, t.Any], additional)
+            value_schema = {"type": ["null", "string"]}
         normalized_value, value_nullable = _normalize_nullable_schema(value_schema, log=log)
         key_id = next_id()
         value_id = next_id()
