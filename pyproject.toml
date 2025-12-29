@@ -1,6 +1,6 @@
 [project]
 name = "target-s3tables"
-version = "0.0.4"
+version = "0.0.5"
 description = "Singer target for S3Tables, built with the Meltano Singer SDK."
 readme = "README.md"
 authors = [{ name = "Alex Maingot", email = "alex.maingot@gmail.com" }]
