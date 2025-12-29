@@ -118,7 +118,7 @@ class S3TablesSink(BatchSink):
             if _is_auth_error(exc):
                 raise RuntimeError(_auth_hint(self._parsed_config)) from exc
             raise
-        
+
         self.logger.info(
             "Committed %d rows to Iceberg table '%s'.",
             arrow_table.num_rows,

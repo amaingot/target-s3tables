@@ -245,11 +245,11 @@ class TargetS3Tables(Target):
         super().__init__(*args, **kwargs)
         apply_aws_env_overrides(self.config)
         _set_log_level_from_config(self.config)
-        
+
         # Track the last successfully committed state
         # This is separate from _latest_state which holds the most recent STATE message
         self._last_committed_state: dict[str, t.Any] | None = None
-        
+
         # Load any persisted state on startup
         self._load_persisted_state()
 
@@ -257,11 +257,11 @@ class TargetS3Tables(Target):
         """Load persisted state from disk if it exists."""
         if not self.config.get("state_persist_enabled", True):
             return
-            
+
         state_path = self.config.get("state_persist_path", ".target_s3tables_state.json")
         if not os.path.exists(state_path):
             return
-            
+
         try:
             with open(state_path, encoding="utf-8") as f:
                 persisted_state = json.load(f)
@@ -281,22 +281,22 @@ class TargetS3Tables(Target):
 
     def _persist_state(self, state: dict[str, t.Any]) -> None:
         """Atomically persist state to disk after successful commit.
-        
+
         Uses atomic write (write to temp file + rename) to avoid partial state.
-        
+
         Args:
             state: The state dict to persist.
         """
         if not self.config.get("state_persist_enabled", True):
             return
-            
+
         state_path = self.config.get("state_persist_path", ".target_s3tables_state.json")
-        
+
         try:
             # Atomic write: write to temp file then rename
             dir_name = os.path.dirname(os.path.abspath(state_path))
             os.makedirs(dir_name, exist_ok=True)
-            
+
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 dir=dir_name,
@@ -305,7 +305,7 @@ class TargetS3Tables(Target):
             ) as tmp_file:
                 json.dump(state, tmp_file, indent=2)
                 tmp_name = tmp_file.name
-            
+
             # Atomic rename
             os.replace(tmp_name, state_path)
             self.logger.debug("Persisted state to %s", state_path)
@@ -318,46 +318,46 @@ class TargetS3Tables(Target):
 
     def _process_state_message(self, message_dict: dict) -> None:
         """Override to cache state messages without emitting them immediately.
-        
+
         STATE messages are cached and only emitted after successful Iceberg commits.
-        
+
         Args:
             message_dict: The Singer STATE message.
         """
         self._assert_line_requires(message_dict, requires={"value"})
         state = message_dict["value"]
-        
+
         # Update latest state (used by SDK base class)
         if self._latest_state == state:
             return
-        
+
         self._latest_state = state
         self.logger.debug("Cached STATE message (will emit after successful commit)")
 
     def record_state_after_commit(self, stream_name: str) -> None:
         """Record that a commit succeeded and emit the corresponding state.
-        
+
         This method is called after successful Iceberg commits.
-        
+
         Args:
             stream_name: The name of the stream that was committed.
         """
         if not self._latest_state:
             return
-            
+
         # Only emit if this is a new state
         if self._last_committed_state == self._latest_state:
             return
-        
+
         # Emit the state to stdout
         self._write_state_message(self._latest_state)
-        
+
         # Persist to disk
         self._persist_state(self._latest_state)
-        
+
         # Track that we've committed this state
         self._last_committed_state = self._latest_state
-        
+
         self.logger.info(
             "Emitted STATE for stream '%s' after successful commit",
             stream_name,
@@ -365,23 +365,23 @@ class TargetS3Tables(Target):
 
     def drain_one(self, sink: t.Any) -> None:
         """Override drain_one to emit state after successful drain.
-        
+
         Args:
             sink: Sink to be drained.
         """
         # Call parent drain_one which processes the batch
         super().drain_one(sink)
-        
+
         # After successful drain (which includes the Iceberg commit),
         # emit the state for this stream
         self.record_state_after_commit(sink.stream_name)
 
     def _write_state_message(self, state: dict) -> None:
         """Override to prevent duplicate state emissions.
-        
+
         The base class calls this in drain_all. We override to check if we've
         already emitted this state after a successful commit.
-        
+
         Args:
             state: The state dict to emit.
         """
@@ -389,13 +389,13 @@ class TargetS3Tables(Target):
         if state == self._last_committed_state:
             self.logger.debug("State already emitted after commit, skipping duplicate")
             return
-        
+
         # Call the parent implementation to actually write the state
         super()._write_state_message(state)
-        
+
         # Update our tracking
         self._last_committed_state = state
-        
+
         # Also persist to disk
         self._persist_state(state)
 

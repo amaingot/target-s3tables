@@ -59,7 +59,7 @@ def test_state_not_emitted_before_commit(
 ) -> None:
     """Test that STATE is not emitted before Iceberg commit."""
     config = {**SAMPLE_CONFIG, "state_persist_path": str(temp_state_file)}
-    
+
     with patch("target_s3tables.sinks.write_arrow_to_table") as mock_write:
         # Setup: write will be called but we'll check state timing
         mock_write.return_value = None
@@ -105,7 +105,7 @@ def test_state_emitted_after_successful_commit(
 ) -> None:
     """Test that STATE is emitted after successful Iceberg commit."""
     config = {**SAMPLE_CONFIG, "state_persist_path": str(temp_state_file)}
-    
+
     with patch("target_s3tables.sinks.write_arrow_to_table") as mock_write:
         mock_write.return_value = None
 
@@ -148,7 +148,7 @@ def test_state_not_emitted_on_commit_failure(
     """Test that STATE is NOT emitted when Iceberg commit fails."""
     # Use a unique state file to avoid interference from other tests
     config = {**SAMPLE_CONFIG, "state_persist_path": str(temp_state_file)}
-    
+
     with patch("target_s3tables.sinks.write_arrow_to_table") as mock_write:
         # Simulate commit failure
         mock_write.side_effect = Exception("Commit failed")
@@ -254,7 +254,7 @@ def test_no_duplicate_state_emission(
 ) -> None:
     """Test that the same state is not emitted multiple times."""
     config = {**SAMPLE_CONFIG, "state_persist_path": str(temp_state_file)}
-    
+
     with patch("target_s3tables.sinks.write_arrow_to_table"):
         target = TargetS3Tables(config=config)
 
@@ -296,10 +296,10 @@ def test_no_duplicate_state_emission(
         target.listen(singer_input)
 
         captured = capsys.readouterr()
-        
+
         # Count how many times the state appears in the output
         state_count = captured.out.count('"bookmarks"')
-        
+
         # State should only be emitted once, not twice
         assert state_count == 1, f"Same state emitted {state_count} times, expected 1"
 
@@ -313,7 +313,7 @@ def test_state_persistence_disabled(
     # Clean up in case it exists from a previous run
     if os.path.exists(test_path):
         os.remove(test_path)
-        
+
     config = {
         **SAMPLE_CONFIG,
         "state_persist_enabled": False,
@@ -356,7 +356,7 @@ def test_state_persistence_disabled(
         # But state should still be emitted to stdout
         captured = capsys.readouterr()
         assert '"bookmarks"' in captured.out, "STATE should still be emitted to stdout"
-        
+
     # Cleanup
     if os.path.exists(test_path):
         os.remove(test_path)
