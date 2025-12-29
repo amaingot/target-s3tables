@@ -427,7 +427,7 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
         )
         map_type = pa.map_(
             pa.field("key", pa.string(), nullable=False),
-            pa.field("value", value_spec.arrow_type, nullable=value_spec.nullable),
+            pa.field("value", value_spec.arrow_type, nullable=True),
         )
         return FieldSpec(source_name, target_name, map_type, nullable, "map", map_value=value_spec)
 
