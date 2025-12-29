@@ -337,7 +337,7 @@ class TargetS3Tables(Target):
     def record_state_after_commit(self, stream_name: str) -> None:
         """Record that a commit succeeded and emit the corresponding state.
         
-        This method is called by sinks after successful Iceberg commits.
+        This method is called after successful Iceberg commits.
         
         Args:
             stream_name: The name of the stream that was committed.
@@ -362,6 +362,19 @@ class TargetS3Tables(Target):
             "Emitted STATE for stream '%s' after successful commit",
             stream_name,
         )
+
+    def drain_one(self, sink: t.Any) -> None:
+        """Override drain_one to emit state after successful drain.
+        
+        Args:
+            sink: Sink to be drained.
+        """
+        # Call parent drain_one which processes the batch
+        super().drain_one(sink)
+        
+        # After successful drain (which includes the Iceberg commit),
+        # emit the state for this stream
+        self.record_state_after_commit(sink.stream_name)
 
     def _write_state_message(self, state: dict) -> None:
         """Override to prevent duplicate state emissions.

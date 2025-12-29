@@ -124,23 +124,10 @@ class S3TablesSink(BatchSink):
             arrow_table.num_rows,
             ".".join(self._table_id),
         )
-        
-        # After successful commit, emit the cached state for this stream
-        self._emit_state_after_commit()
 
     def mark_drained(self) -> None:
         super().mark_drained()
         self._batch_bytes = 0
-
-    def _emit_state_after_commit(self) -> None:
-        """Emit cached state after successful Iceberg commit.
-        
-        This ensures STATE is only emitted after the data is durably committed.
-        """
-        # Access the target and emit state after successful commit
-        target = self.target
-        if hasattr(target, "record_state_after_commit"):
-            target.record_state_after_commit(self.stream_name)
 
     def _ensure_table(self):  # noqa: ANN001
         if self._table is not None:
