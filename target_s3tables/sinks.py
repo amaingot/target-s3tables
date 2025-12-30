@@ -108,9 +108,17 @@ class S3TablesSink(BatchSink):
                 log=self.logger,
             )
         except Exception as exc:  # noqa: BLE001
+            self.logger.error(
+                "Failed to commit batch for stream '%s' (table '%s'): %s. "
+                "State will NOT be emitted for this batch.",
+                self.stream_name,
+                ".".join(self._table_id),
+                exc,
+            )
             if _is_auth_error(exc):
                 raise RuntimeError(_auth_hint(self._parsed_config)) from exc
             raise
+
         self.logger.info(
             "Committed %d rows to Iceberg table '%s'.",
             arrow_table.num_rows,

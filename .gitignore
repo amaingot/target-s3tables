@@ -1,6 +1,9 @@
 # Secrets and internal config files
 .secrets/*
 
+# State persistence files
+.target_s3tables_state.json
+
 # Ignore meltano internal cache and sqlite systemdb
 
 .meltano/
