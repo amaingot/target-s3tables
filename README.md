@@ -100,6 +100,25 @@ tap-smoke-test | target-s3tables --config=ENV
 
 If you write to an existing **partitioned** table and `append` fails, the target raises a message with options (unpartitioned tables, dynamic partition overwrite for compatible cases, or another engine).
 
+## Commit conflict retries (Iceberg optimistic concurrency)
+
+Iceberg commits are optimistic. If another writer (or S3 Tables maintenance) updates the table first, you can see commit failures like `Requirement failed: branch main has changed`. The target retries commits with exponential backoff and optional metadata-only retries to avoid rewriting Parquet files on each retry. Metadata-only retries use internal PyIceberg APIs and fall back to simple retries if unavailable.
+
+When the commit state is unknown (for example, a transport timeout), the target performs status checks by looking for a unique write UUID in recent snapshots before retrying.
+
+Recommended settings:
+
+- `commit_retry_mode`: `metadata-only` (default) to reuse data files on retries; `simple-retry` to re-run full appends.
+- `commit_retry_*` and `commit_status_check_*`: tune retry and status-check budgets.
+- `internal_table_commit_locking`: serialize commits per table within a single target process.
+- `ensure_table_properties`: optionally backfill commit retry defaults as table properties on existing tables.
+
+If you still see failures:
+
+- Ensure only one Meltano run writes to the same table at a time.
+- Increase the commit retry budget or total timeout.
+- Increase `batch_size_rows` to reduce commit frequency.
+
 ## Nullability notes (maps/arrays)
 
 - Top-level column nullability follows Singer JSON Schema: fields listed in `required` and not declared nullable (e.g. `"type": ["null", ...]`) become **required** Iceberg columns; everything else becomes **optional**.
@@ -149,6 +168,19 @@ plugins:
     - name: sigv4_enabled
     - name: table_properties
     - name: snapshot_properties
+    - name: commit_retry_num_retries
+    - name: commit_retry_min_wait_ms
+    - name: commit_retry_max_wait_ms
+    - name: commit_retry_total_timeout_ms
+    - name: commit_retry_backoff_multiplier
+    - name: commit_retry_jitter
+    - name: commit_status_check_num_retries
+    - name: commit_status_check_min_wait_ms
+    - name: commit_status_check_max_wait_ms
+    - name: internal_table_commit_locking
+    - name: commit_retry_mode
+    - name: max_commit_attempts_override
+    - name: ensure_table_properties
     - name: debug_http
     - name: aws_access_key_id
     - name: aws_secret_access_key
@@ -218,6 +250,19 @@ Built with the [Meltano Singer SDK](https://sdk.meltano.com).
 | aws_session_token | False | None | Optional AWS session token override. |
 | table_properties | False | {} | Iceberg table properties passed at create_table time. |
 | snapshot_properties | False | {} | Snapshot properties passed to append/overwrite calls (when supported). |
+| commit_retry_num_retries | False | 4 | Number of commit retries after the initial attempt. |
+| commit_retry_min_wait_ms | False | 100 | Minimum backoff wait (ms) between commit retries. |
+| commit_retry_max_wait_ms | False | 60000 | Maximum backoff wait (ms) between commit retries. |
+| commit_retry_total_timeout_ms | False | 1800000 | Total timeout (ms) across all commit retries. |
+| commit_retry_backoff_multiplier | False | 2.0 | Exponential backoff multiplier for commit retries. |
+| commit_retry_jitter | False | 0.2 | Jitter factor applied to commit retry backoff (0.2 = +/-20%). |
+| commit_status_check_num_retries | False | 3 | Number of status checks when commit state is unknown. |
+| commit_status_check_min_wait_ms | False | 1000 | Minimum wait (ms) between commit status checks. |
+| commit_status_check_max_wait_ms | False | 60000 | Maximum wait (ms) between commit status checks. |
+| internal_table_commit_locking | False | True | Serialize commits per table within this process. |
+| commit_retry_mode | False | metadata-only | Commit retry strategy: simple-retry re-writes data on retries; metadata-only reuses data files when supported. |
+| max_commit_attempts_override | False | None | Optional cap on total commit attempts (including the first). |
+| ensure_table_properties | False | False | If true, update existing tables to include commit retry properties (commit.retry.* and commit.status-check.*). |
 | debug_http | False | False | Enable debug logging for HTTP/SigV4 interactions. |
 | log_level | False | None | Optional log level override for this process (e.g. DEBUG, INFO). |
 | add_record_metadata | False | None | Whether to add metadata fields to records. |

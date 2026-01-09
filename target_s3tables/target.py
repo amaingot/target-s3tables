@@ -210,6 +210,93 @@ class TargetS3Tables(Target):
             description="Snapshot properties passed to append/overwrite calls (when supported).",
         ),
         th.Property(
+            "commit_retry_num_retries",
+            th.IntegerType,
+            default=4,
+            description="Number of commit retries after the initial attempt.",
+        ),
+        th.Property(
+            "commit_retry_min_wait_ms",
+            th.IntegerType,
+            default=100,
+            description="Minimum backoff wait (ms) between commit retries.",
+        ),
+        th.Property(
+            "commit_retry_max_wait_ms",
+            th.IntegerType,
+            default=60000,
+            description="Maximum backoff wait (ms) between commit retries.",
+        ),
+        th.Property(
+            "commit_retry_total_timeout_ms",
+            th.IntegerType,
+            default=1800000,
+            description="Total timeout (ms) across all commit retries.",
+        ),
+        th.Property(
+            "commit_retry_backoff_multiplier",
+            th.NumberType,
+            default=2.0,
+            description="Exponential backoff multiplier for commit retries.",
+        ),
+        th.Property(
+            "commit_retry_jitter",
+            th.NumberType,
+            default=0.2,
+            description="Jitter factor applied to commit retry backoff (0.2 = +/-20%).",
+        ),
+        th.Property(
+            "commit_status_check_num_retries",
+            th.IntegerType,
+            default=3,
+            description="Number of status checks when commit state is unknown.",
+        ),
+        th.Property(
+            "commit_status_check_min_wait_ms",
+            th.IntegerType,
+            default=1000,
+            description="Minimum wait (ms) between commit status checks.",
+        ),
+        th.Property(
+            "commit_status_check_max_wait_ms",
+            th.IntegerType,
+            default=60000,
+            description="Maximum wait (ms) between commit status checks.",
+        ),
+        th.Property(
+            "internal_table_commit_locking",
+            th.BooleanType,
+            default=True,
+            description="Serialize commits per table within this process.",
+        ),
+        th.Property(
+            "commit_retry_mode",
+            th.StringType,
+            allowed_values=["simple-retry", "metadata-only"],
+            default="metadata-only",
+            description=(
+                "Commit retry strategy: simple-retry re-writes data on retries; "
+                "metadata-only reuses data files and retries only metadata commits when "
+                "supported by PyIceberg."
+            ),
+        ),
+        th.Property(
+            "max_commit_attempts_override",
+            th.IntegerType,
+            nullable=True,
+            default=None,
+            description="Optional cap on total commit attempts (including the first).",
+        ),
+        th.Property(
+            "ensure_table_properties",
+            th.BooleanType,
+            default=False,
+            description=(
+                "If true, update existing tables to include commit retry properties "
+                "(commit.retry.* and commit.status-check.*)."
+            ),
+        ),
+        th.Property(
             "debug_http",
             th.BooleanType,
             default=False,

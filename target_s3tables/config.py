@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 CatalogMode = t.Literal["glue_rest", "s3tables_rest"]
 WriteMode = t.Literal["append", "overwrite"]
+CommitRetryMode = t.Literal["simple-retry", "metadata-only"]
 
 
 _ACCOUNT_ID_RE = re.compile(r"^\d{12}$")
@@ -108,6 +109,12 @@ def apply_aws_env_overrides(config: t.Mapping[str, t.Any]) -> None:
         os.environ["AWS_SESSION_TOKEN"] = str(config["aws_session_token"])
 
 
+def _parse_optional_int(value: t.Any) -> int | None:  # noqa: ANN401
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
 @dataclass(frozen=True)
 class ParsedConfig:  # pylint: disable=too-many-instance-attributes
     """Parsed and normalized plugin configuration."""
@@ -144,6 +151,21 @@ class ParsedConfig:  # pylint: disable=too-many-instance-attributes
     table_properties: dict[str, str]
     snapshot_properties: dict[str, str]
     debug_http: bool
+
+    # Commit retry
+    commit_retry_num_retries: int
+    commit_retry_min_wait_ms: int
+    commit_retry_max_wait_ms: int
+    commit_retry_total_timeout_ms: int
+    commit_retry_backoff_multiplier: float
+    commit_retry_jitter: float
+    commit_status_check_num_retries: int
+    commit_status_check_min_wait_ms: int
+    commit_status_check_max_wait_ms: int
+    internal_table_commit_locking: bool
+    commit_retry_mode: CommitRetryMode
+    max_commit_attempts_override: int | None
+    ensure_table_properties: bool
 
     @classmethod
     def from_mapping(cls, config: t.Mapping[str, t.Any]) -> ParsedConfig:
@@ -193,7 +215,43 @@ class ParsedConfig:  # pylint: disable=too-many-instance-attributes
                 for k, v in (config.get("snapshot_properties") or {}).items()
             },
             debug_http=bool(config.get("debug_http", False)),
+            commit_retry_num_retries=int(config.get("commit_retry_num_retries", 4)),
+            commit_retry_min_wait_ms=int(config.get("commit_retry_min_wait_ms", 100)),
+            commit_retry_max_wait_ms=int(config.get("commit_retry_max_wait_ms", 60000)),
+            commit_retry_total_timeout_ms=int(config.get("commit_retry_total_timeout_ms", 1800000)),
+            commit_retry_backoff_multiplier=float(
+                config.get("commit_retry_backoff_multiplier", 2.0),
+            ),
+            commit_retry_jitter=float(config.get("commit_retry_jitter", 0.2)),
+            commit_status_check_num_retries=int(config.get("commit_status_check_num_retries", 3)),
+            commit_status_check_min_wait_ms=int(
+                config.get("commit_status_check_min_wait_ms", 1000),
+            ),
+            commit_status_check_max_wait_ms=int(
+                config.get("commit_status_check_max_wait_ms", 60000),
+            ),
+            internal_table_commit_locking=bool(config.get("internal_table_commit_locking", True)),
+            commit_retry_mode=t.cast(
+                CommitRetryMode,
+                config.get("commit_retry_mode", "metadata-only"),
+            ),
+            max_commit_attempts_override=_parse_optional_int(
+                config.get("max_commit_attempts_override"),
+            ),
+            ensure_table_properties=bool(config.get("ensure_table_properties", False)),
         )
+
+    def commit_retry_table_properties(self) -> dict[str, str]:
+        """Return Iceberg table properties for commit retry defaults."""
+        return {
+            "commit.retry.num-retries": str(self.commit_retry_num_retries),
+            "commit.retry.min-wait-ms": str(self.commit_retry_min_wait_ms),
+            "commit.retry.max-wait-ms": str(self.commit_retry_max_wait_ms),
+            "commit.retry.total-timeout-ms": str(self.commit_retry_total_timeout_ms),
+            "commit.status-check.num-retries": str(self.commit_status_check_num_retries),
+            "commit.status-check.min-wait-ms": str(self.commit_status_check_min_wait_ms),
+            "commit.status-check.max-wait-ms": str(self.commit_status_check_max_wait_ms),
+        }
 
     def rest_catalog_properties(self) -> dict[str, str]:
         """Build PyIceberg REST catalog properties for `load_catalog()`."""
@@ -239,6 +297,39 @@ class ParsedConfig:  # pylint: disable=too-many-instance-attributes
         return f"{self.account_id}:s3tablescatalog/{self.table_bucket_name}"
 
 
+def _validate_non_negative_int(name: str, value: t.Any) -> None:  # noqa: ANN401
+    if value is None:
+        return
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:  # noqa: PERF203
+        raise ValueError(f"Invalid `{name}`. Expected a non-negative integer.") from exc
+    if parsed < 0:
+        raise ValueError(f"Invalid `{name}`. Expected a non-negative integer.")
+
+
+def _validate_positive_int(name: str, value: t.Any) -> None:  # noqa: ANN401
+    if value is None:
+        return
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:  # noqa: PERF203
+        raise ValueError(f"Invalid `{name}`. Expected a positive integer.") from exc
+    if parsed <= 0:
+        raise ValueError(f"Invalid `{name}`. Expected a positive integer.")
+
+
+def _validate_non_negative_float(name: str, value: t.Any) -> None:  # noqa: ANN401
+    if value is None:
+        return
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:  # noqa: PERF203
+        raise ValueError(f"Invalid `{name}`. Expected a non-negative float.") from exc
+    if parsed < 0:
+        raise ValueError(f"Invalid `{name}`. Expected a non-negative float.")
+
+
 def validate_config(config: t.Mapping[str, t.Any]) -> None:
     """Run additional validations beyond JSONSchema."""
     catalog_mode = t.cast(CatalogMode, config.get("catalog_mode", "glue_rest"))
@@ -276,3 +367,62 @@ def validate_config(config: t.Mapping[str, t.Any]) -> None:
             )
     else:
         raise ValueError(f"Unsupported `catalog_mode`: {catalog_mode}")
+
+    _validate_non_negative_int(
+        "commit_retry_num_retries",
+        config.get("commit_retry_num_retries", 4),
+    )
+    _validate_positive_int(
+        "commit_retry_min_wait_ms",
+        config.get("commit_retry_min_wait_ms", 100),
+    )
+    _validate_positive_int(
+        "commit_retry_max_wait_ms",
+        config.get("commit_retry_max_wait_ms", 60000),
+    )
+    min_wait_value = config.get("commit_retry_min_wait_ms", 100)
+    max_wait_value = config.get("commit_retry_max_wait_ms", 60000)
+    min_wait = int(min_wait_value) if min_wait_value is not None else 100
+    max_wait = int(max_wait_value) if max_wait_value is not None else 60000
+    if max_wait < min_wait:
+        raise ValueError("`commit_retry_max_wait_ms` must be >= `commit_retry_min_wait_ms`.")
+    _validate_positive_int(
+        "commit_retry_total_timeout_ms",
+        config.get("commit_retry_total_timeout_ms", 1800000),
+    )
+    _validate_non_negative_float(
+        "commit_retry_backoff_multiplier",
+        config.get("commit_retry_backoff_multiplier", 2.0),
+    )
+    _validate_non_negative_float(
+        "commit_retry_jitter",
+        config.get("commit_retry_jitter", 0.2),
+    )
+    jitter_value = config.get("commit_retry_jitter", 0.2)
+    jitter = float(jitter_value) if jitter_value is not None else 0.2
+    if jitter > 1.0:
+        raise ValueError("`commit_retry_jitter` must be <= 1.0.")
+    _validate_non_negative_int(
+        "commit_status_check_num_retries",
+        config.get("commit_status_check_num_retries", 3),
+    )
+    _validate_positive_int(
+        "commit_status_check_min_wait_ms",
+        config.get("commit_status_check_min_wait_ms", 1000),
+    )
+    _validate_positive_int(
+        "commit_status_check_max_wait_ms",
+        config.get("commit_status_check_max_wait_ms", 60000),
+    )
+    status_min_value = config.get("commit_status_check_min_wait_ms", 1000)
+    status_max_value = config.get("commit_status_check_max_wait_ms", 60000)
+    status_min_wait = int(status_min_value) if status_min_value is not None else 1000
+    status_max_wait = int(status_max_value) if status_max_value is not None else 60000
+    if status_max_wait < status_min_wait:
+        raise ValueError(
+            "`commit_status_check_max_wait_ms` must be >= `commit_status_check_min_wait_ms`.",
+        )
+    _validate_positive_int(
+        "max_commit_attempts_override",
+        config.get("max_commit_attempts_override"),
+    )

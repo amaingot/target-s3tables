@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import inspect
 import itertools
 import json
 import logging
+import os
 import random
 import re
 import threading
 import time
 import typing as t
+import uuid
 from dataclasses import dataclass
 
 import pyarrow as pa
@@ -32,11 +36,24 @@ from pyiceberg.types import (
     TimestamptzType,
 )
 
+try:  # pragma: no cover - optional internal API
+    from pyiceberg.io import pyarrow as iceberg_pyarrow
+# pylint: disable-next=broad-except
+except Exception:  # noqa: BLE001
+    iceberg_pyarrow = None  # type: ignore[assignment]
+
 from target_s3tables.config import ParsedConfig
+from target_s3tables.retry import CommitRetryConfig, get_table_commit_lock, run_with_commit_retries
 
 
 _CATALOG_LOCK = threading.Lock()
 _CATALOG_CACHE: dict[tuple[tuple[str, str], ...], t.Any] = {}
+WRITE_UUID_PROPERTY = "target_s3tables.write_uuid"
+
+
+class _SupportsUpdateProperties(t.Protocol):
+    def update_properties(self) -> t.ContextManager[t.Any]:
+        ...
 
 
 def clear_catalog_cache() -> None:
@@ -70,6 +87,48 @@ def get_catalog(config: ParsedConfig, *, log: logging.Logger) -> t.Any:
 def _enable_http_debug_logging() -> None:
     for name in ("urllib3", "requests", "botocore", "pyiceberg"):
         logging.getLogger(name).setLevel(logging.DEBUG)
+
+
+def _commit_retry_config(config: ParsedConfig) -> CommitRetryConfig:
+    return CommitRetryConfig(
+        num_retries=config.commit_retry_num_retries,
+        min_wait_ms=config.commit_retry_min_wait_ms,
+        max_wait_ms=config.commit_retry_max_wait_ms,
+        total_timeout_ms=config.commit_retry_total_timeout_ms,
+        backoff_multiplier=config.commit_retry_backoff_multiplier,
+        jitter=config.commit_retry_jitter,
+        status_check_num_retries=config.commit_status_check_num_retries,
+        status_check_min_wait_ms=config.commit_status_check_min_wait_ms,
+        status_check_max_wait_ms=config.commit_status_check_max_wait_ms,
+        max_attempts_override=config.max_commit_attempts_override,
+    )
+
+
+def build_snapshot_properties(  # noqa: PLR0913
+    config: ParsedConfig,
+    *,
+    stream_name: str | None,
+    write_uuid: str,
+    batch_id: str | None = None,
+    extra_properties: dict[str, t.Any] | None = None,
+) -> dict[str, str]:
+    """Build snapshot properties with standard target metadata."""
+    props = {str(k): str(v)
+             for k, v in (config.snapshot_properties or {}).items()}
+    if extra_properties:
+        props.update({str(k): str(v) for k, v in extra_properties.items()})
+
+    if stream_name:
+        props["target_s3tables.stream_name"] = stream_name
+    if batch_id:
+        props["target_s3tables.batch_id"] = batch_id
+    meltano_run_id = os.environ.get(
+        "MELTANO_RUN_ID") or os.environ.get("MELTANO_JOB_ID")
+    if meltano_run_id:
+        props["meltano.run_id"] = meltano_run_id
+
+    props[WRITE_UUID_PROPERTY] = write_uuid
+    return props
 
 
 # pylint: disable-next=too-many-arguments
@@ -196,7 +255,16 @@ def load_or_create_table(
         return t.cast(Table, catalog.load_table(table_id))
 
     try:
-        return retry(_load, log=log, op=f"load_table({'.'.join(table_id)})")
+        table = retry(_load, log=log, op=f"load_table({'.'.join(table_id)})")
+        if config.ensure_table_properties:
+            _ensure_commit_retry_properties(
+                catalog=catalog,
+                table=table,
+                table_id=table_id,
+                config=config,
+                log=log,
+            )
+        return table
     except NoSuchTableError:
         if not config.create_tables:
             raise RuntimeError(
@@ -212,13 +280,17 @@ def load_or_create_table(
 
     _create_namespace_if_needed(catalog, namespace=namespace, log=log)
 
+    create_properties = dict(config.table_properties)
+    for key, value in config.commit_retry_table_properties().items():
+        create_properties.setdefault(key, value)
+
     def _create() -> Table:
         return t.cast(
             Table,
             catalog.create_table(
                 table_id,
                 schema=iceberg_schema,
-                properties=config.table_properties,
+                properties=create_properties,
             ),
         )
 
@@ -226,13 +298,87 @@ def load_or_create_table(
     return table
 
 
+def _ensure_commit_retry_properties(
+    *,
+    catalog: t.Any,
+    table: Table,
+    table_id: tuple[str, ...],
+    config: ParsedConfig,
+    log: logging.Logger,
+) -> None:
+    desired = config.commit_retry_table_properties()
+    existing = getattr(table, "properties", None) or {}
+    to_set = {k: v for k, v in desired.items() if existing.get(k) != v}
+    if not to_set:
+        return
+
+    if not hasattr(table, "update_properties"):
+        log.warning(
+            "Table '%s' does not support update_properties; skipping ensure_table_properties.",
+            ".".join(table_id),
+        )
+        return
+
+    def _load() -> Table:
+        return t.cast(Table, catalog.load_table(table_id))
+
+    def _commit(updated_table: Table) -> None:
+        update_table = t.cast(_SupportsUpdateProperties, updated_table)
+        with update_table.update_properties() as update:
+            for key, value in to_set.items():
+                update.set(key, value)
+
+    def _status_check(check_table: Table) -> bool:
+        props = getattr(check_table, "properties", None) or {}
+        return all(props.get(key) == value for key, value in to_set.items())
+
+    lock = (
+        get_table_commit_lock(table_id)
+        if config.internal_table_commit_locking
+        else contextlib.nullcontext()
+    )
+    with lock:
+        run_with_commit_retries(
+            operation_name="update_properties",
+            table_id=table_id,
+            commit_fn=_commit,
+            table_loader=lambda: retry(
+                _load, log=log, op=f"\"load_table({'.'.join(table_id)})\""),
+            config=_commit_retry_config(config),
+            log=log,
+            status_check_fn=_status_check,
+        )
+
+
 def evolve_table_schema_union_by_name(
     table: Table,
     *,
     arrow_schema: pa.Schema,
     log: logging.Logger,
+    config: ParsedConfig | None = None,
+    table_id: tuple[str, ...] | None = None,
+    table_loader: t.Callable[[], Table] | None = None,
 ) -> None:
     """Evolve table schema using union-by-name (adds new columns, keeps existing IDs)."""
+
+    if config and table_id and table_loader:
+        def _commit(updated_table: Table) -> None:
+            with updated_table.update_schema() as update:
+                update.union_by_name(arrow_schema)
+
+        def _status_check(check_table: Table) -> bool:
+            return _schema_contains_arrow_schema(check_table, arrow_schema)
+
+        run_with_commit_retries(
+            operation_name="update_schema",
+            table_id=table_id,
+            commit_fn=_commit,
+            table_loader=table_loader,
+            config=_commit_retry_config(config),
+            log=log,
+            status_check_fn=_status_check,
+        )
+        return
 
     def _evolve() -> None:
         with table.update_schema() as update:
@@ -258,7 +404,8 @@ def _create_namespace_if_needed(
         catalog.create_namespace(namespace)
 
     try:
-        retry(_create_ns, log=log, op=f"create_namespace({'.'.join(namespace)})")
+        retry(_create_ns, log=log,
+              op=f"create_namespace({'.'.join(namespace)})")
     except Exception as exc:  # noqa: BLE001
         # Best-effort: ignore "already exists" errors.
         if "already exists" in str(exc).lower():
@@ -293,7 +440,8 @@ def singer_schema_to_arrow_schema(
 
     required = set(singer_schema.get("required") or [])
     names = list(properties.keys())
-    name_map = _dedupe_sanitized_names(names) if sanitize_names else {n: n for n in names}
+    name_map = _dedupe_sanitized_names(names) if sanitize_names else {
+        n: n for n in names}
 
     specs: list[FieldSpec] = []
     fields: list[pa.Field] = []
@@ -309,7 +457,8 @@ def singer_schema_to_arrow_schema(
             log=log,
         )
         specs.append(spec)
-        fields.append(pa.field(target_name, spec.arrow_type, nullable=spec.nullable))
+        fields.append(
+            pa.field(target_name, spec.arrow_type, nullable=spec.nullable))
 
     return pa.schema(fields), tuple(specs)
 
@@ -367,11 +516,13 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
         if isinstance(props, dict) and props:
             required = set(normalized.get("required") or [])
             names = list(props.keys())
-            name_map = _dedupe_sanitized_names(names) if sanitize_names else {n: n for n in names}
+            name_map = _dedupe_sanitized_names(names) if sanitize_names else {
+                n: n for n in names}
             child_specs: list[FieldSpec] = []
             child_fields: list[pa.Field] = []
             for child_source in sorted(names):
-                child_schema = t.cast(dict[str, t.Any], props.get(child_source) or {})
+                child_schema = t.cast(
+                    dict[str, t.Any], props.get(child_source) or {})
                 child_target = name_map[child_source]
                 child_spec = _jsonschema_to_fieldspec(
                     source_name=child_source,
@@ -383,7 +534,8 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
                 )
                 child_specs.append(child_spec)
                 child_fields.append(
-                    pa.field(child_target, child_spec.arrow_type, nullable=child_spec.nullable),
+                    pa.field(child_target, child_spec.arrow_type,
+                             nullable=child_spec.nullable),
                 )
             return FieldSpec(
                 source_name,
@@ -405,8 +557,8 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
 
         value_schema: dict[str, t.Any]
         if additional is True or additional is None:
-            # In JSON Schema, unspecified/true additionalProperties means values may be any JSON type,
-            # including null. Default to a nullable string representation.
+            # In JSON Schema, unspecified/true additionalProperties means values may be any JSON
+            # type, including null. Default to a nullable string representation.
             value_schema = {"type": ["null", "string"]}
         elif isinstance(additional, dict):
             # When additionalProperties is an untyped schema (e.g. {}), values may be any JSON type
@@ -432,7 +584,8 @@ def _jsonschema_to_fieldspec(  # noqa: PLR0913
         return FieldSpec(source_name, target_name, map_type, nullable, "map", map_value=value_spec)
 
     # Fallback for unsupported schemas.
-    log.warning("Unsupported JSON Schema type for field '%s'. Coercing to string.", source_name)
+    log.warning(
+        "Unsupported JSON Schema type for field '%s'. Coercing to string.", source_name)
     return FieldSpec(source_name, target_name, pa.string(), True, "primitive")
 
 
@@ -458,7 +611,8 @@ def _normalize_nullable_schema(
         non_null_types = [t for t in type_list if t != "null"]
         if len(non_null_types) == 1:
             return {**schema, "type": non_null_types[0]}, nullable
-        log.warning("Union types beyond nullable pattern detected. Coercing to string.")
+        log.warning(
+            "Union types beyond nullable pattern detected. Coercing to string.")
         return {"type": "string"}, True
 
     # Handle anyOf/oneOf beyond nullable pattern.
@@ -467,7 +621,8 @@ def _normalize_nullable_schema(
         if isinstance(variants, list) and variants:
             dict_variants = [v for v in variants if isinstance(v, dict)]
             if len(dict_variants) != len(variants):
-                log.warning("%s contains non-object variants. Coercing to string.", key)
+                log.warning(
+                    "%s contains non-object variants. Coercing to string.", key)
                 return {"type": "string"}, True
 
             def _is_null_variant(v: dict[str, t.Any]) -> bool:
@@ -479,12 +634,16 @@ def _normalize_nullable_schema(
                     return "null" in vt_list and all(x == "null" for x in vt_list)
                 return False
 
-            nullable_variants = [v for v in dict_variants if _is_null_variant(v)]
-            non_null_variants = [v for v in dict_variants if not _is_null_variant(v)]
+            nullable_variants = [
+                v for v in dict_variants if _is_null_variant(v)]
+            non_null_variants = [
+                v for v in dict_variants if not _is_null_variant(v)]
             if len(non_null_variants) == 1 and len(nullable_variants) >= 1:
-                normalized, _ = _normalize_nullable_schema(non_null_variants[0], log=log)
+                normalized, _ = _normalize_nullable_schema(
+                    non_null_variants[0], log=log)
                 return normalized, True
-            log.warning("%s beyond nullable pattern detected. Coercing to string.", key)
+            log.warning(
+                "%s beyond nullable pattern detected. Coercing to string.", key)
             return {"type": "string"}, True
 
     # Default: no nullable semantics inferred.
@@ -530,7 +689,8 @@ def _coerce_value(value: t.Any, spec: FieldSpec) -> t.Any:  # noqa: ANN401, PLR0
             return {} if not spec.nullable else None
         out: dict[str, t.Any] = {}
         for child in spec.children:
-            out[child.target_name] = _coerce_value(value.get(child.source_name), child)
+            out[child.target_name] = _coerce_value(
+                value.get(child.source_name), child)
         return out
 
     if spec.kind == "list":
@@ -652,7 +812,8 @@ def singer_schema_to_iceberg_schema(
 
     required = set(singer_schema.get("required") or [])
     names = list(properties.keys())
-    name_map = _dedupe_sanitized_names(names) if sanitize_names else {n: n for n in names}
+    name_map = _dedupe_sanitized_names(names) if sanitize_names else {
+        n: n for n in names}
     next_id = itertools.count(1).__next__
 
     fields: list[NestedField] = []
@@ -720,7 +881,8 @@ def _jsonschema_to_iceberg_type(
     if json_type == "boolean":
         return BooleanType()
     if json_type == "array":
-        items = t.cast(dict[str, t.Any], schema.get("items") or {"type": "string"})
+        items = t.cast(dict[str, t.Any], schema.get(
+            "items") or {"type": "string"})
         normalized, nullable = _normalize_nullable_schema(items, log=log)
         element_id = next_id()
         element_type = _jsonschema_to_iceberg_type(
@@ -735,10 +897,12 @@ def _jsonschema_to_iceberg_type(
         if isinstance(props, dict) and props:
             required = set(schema.get("required") or [])
             names = list(props.keys())
-            name_map = _dedupe_sanitized_names(names) if sanitize_names else {n: n for n in names}
+            name_map = _dedupe_sanitized_names(names) if sanitize_names else {
+                n: n for n in names}
             fields: list[NestedField] = []
             for source_name in sorted(names):
-                child_schema = t.cast(dict[str, t.Any], props.get(source_name) or {})
+                child_schema = t.cast(
+                    dict[str, t.Any], props.get(source_name) or {})
                 child_name = name_map[source_name]
                 fields.append(
                     _jsonschema_to_nested_field(
@@ -755,13 +919,14 @@ def _jsonschema_to_iceberg_type(
 
         additional = schema.get("additionalProperties")
         if additional is False:
-            log.warning("Object schema without properties; coercing to string.")
+            log.warning(
+                "Object schema without properties; coercing to string.")
             return StringType()
 
         value_schema: dict[str, t.Any]
         if additional is True or additional is None:
-            # In JSON Schema, unspecified/true additionalProperties means values may be any JSON type,
-            # including null. Default to a nullable string representation.
+            # In JSON Schema, unspecified/true additionalProperties means values may be any JSON
+            # type, including null. Default to a nullable string representation.
             value_schema = {"type": ["null", "string"]}
         elif isinstance(additional, dict):
             # When additionalProperties is an untyped schema (e.g. {}), values may be any JSON type
@@ -772,7 +937,8 @@ def _jsonschema_to_iceberg_type(
                 value_schema = t.cast(dict[str, t.Any], additional)
         else:
             value_schema = {"type": ["null", "string"]}
-        normalized_value, value_nullable = _normalize_nullable_schema(value_schema, log=log)
+        normalized_value, value_nullable = _normalize_nullable_schema(
+            value_schema, log=log)
         key_id = next_id()
         value_id = next_id()
         value_type = _jsonschema_to_iceberg_type(
@@ -789,7 +955,8 @@ def _jsonschema_to_iceberg_type(
             value_required=not value_nullable,
         )
 
-    log.warning("Unsupported JSON Schema type '%s'; coercing to string.", json_type)
+    log.warning(
+        "Unsupported JSON Schema type '%s'; coercing to string.", json_type)
     return StringType()
 
 
@@ -804,15 +971,273 @@ def is_table_partitioned(table: Table) -> bool:
         return False
 
 
-def write_arrow_to_table(
+def _schema_contains_arrow_schema(table: Table, arrow_schema: pa.Schema) -> bool:
+    try:
+        iceberg_schema = table.schema()
+    # pylint: disable-next=broad-exception-caught
+    except Exception:  # noqa: BLE001
+        return False
+
+    if hasattr(iceberg_schema, "find_field"):
+        for field in arrow_schema:
+            try:
+                iceberg_schema.find_field(field.name)
+            # pylint: disable-next=broad-exception-caught
+            except Exception:  # noqa: BLE001
+                return False
+        return True
+
+    fields = getattr(iceberg_schema, "fields", None)
+    if not fields:
+        return False
+    names = {getattr(field, "name", None) for field in fields}
+    return all(field.name in names for field in arrow_schema)
+
+
+def _normalize_write_uuid(value: str | uuid.UUID | None) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    if isinstance(value, str):
+        return uuid.UUID(value)
+    return uuid.uuid4()
+
+
+def _snapshot_summary(snapshot: t.Any) -> dict[str, str]:
+    summary = getattr(snapshot, "summary", None)
+    if callable(summary):
+        try:
+            summary = summary()
+            # pylint: disable-next=broad-exception-caught
+        except Exception:  # noqa: BLE001
+            summary = None
+    return summary if isinstance(summary, dict) else {}
+
+
+def _iter_snapshots(table: Table) -> t.Iterable[t.Any]:
+    snapshots = getattr(table, "snapshots", None)
+    if callable(snapshots):
+        try:
+            return snapshots()  # type: ignore[return-value]
+        # pylint: disable-next=broad-exception-caught
+        except Exception:  # noqa: BLE001
+            return []
+    if snapshots is not None:
+        return snapshots
+    metadata = getattr(table, "metadata", None)
+    if metadata is not None:
+        return getattr(metadata, "snapshots", []) or []
+    return []
+
+
+def _snapshot_has_write_uuid(snapshot: t.Any, write_uuid: str) -> bool:
+    summary = _snapshot_summary(snapshot)
+    if summary.get(WRITE_UUID_PROPERTY) == write_uuid:
+        return True
+    for key in ("commit-id", "commit_id", "commit.uuid", "commit_uuid"):
+        if summary.get(key) == write_uuid:
+            return True
+    return False
+
+
+def _table_has_write_uuid(table: Table, write_uuid: str) -> bool:
+    for snapshot in _iter_snapshots(table):
+        if _snapshot_has_write_uuid(snapshot, write_uuid):
+            return True
+    return False
+
+
+def _dataframe_to_data_files_func() -> t.Callable[..., t.Any] | None:
+    if iceberg_pyarrow is None:
+        return None
+    for name in ("_dataframe_to_data_files", "_pyarrow_to_data_files", "pyarrow_to_data_files"):
+        candidate = getattr(iceberg_pyarrow, name, None)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def _prepare_data_files(
+    table: Table,
+    *,
+    arrow_table: pa.Table,
+    write_uuid: uuid.UUID,
+    snapshot_properties: dict[str, str] | None,
+    log: logging.Logger,
+) -> list[t.Any] | None:
+    func = _dataframe_to_data_files_func()
+    if func is None:
+        return None
+
+    params = inspect.signature(func).parameters
+    kwargs: dict[str, t.Any] = {}
+    if "table" in params:
+        kwargs["table"] = table
+    if "df" in params:
+        kwargs["df"] = arrow_table
+    elif "arrow_table" in params:
+        kwargs["arrow_table"] = arrow_table
+    elif "pa_table" in params:
+        kwargs["pa_table"] = arrow_table
+    if "schema" in params:
+        kwargs["schema"] = table.schema()
+    if "spec" in params:
+        kwargs["spec"] = table.spec()
+    if "io" in params:
+        kwargs["io"] = table.io
+    if "write_uuid" in params:
+        kwargs["write_uuid"] = write_uuid
+    if "snapshot_properties" in params:
+        kwargs["snapshot_properties"] = snapshot_properties
+
+    try:
+        data_files = func(**kwargs)
+    # pylint: disable-next=broad-exception-caught
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "Failed to build data files for metadata-only commits: %s. Falling back to simple",
+            exc,
+        )
+        return None
+
+    return list(data_files)
+
+
+def _append_data_files_metadata_only(
+    table: Table,
+    *,
+    data_files: list[t.Any],
+    snapshot_properties: dict[str, str] | None,
+    write_uuid: uuid.UUID,
+) -> None:
+    tx = table.transaction()
+    if hasattr(tx, "_append_snapshot_producer") and snapshot_properties is not None:
+        # pylint: disable-next=protected-access
+        with tx._append_snapshot_producer(snapshot_properties, branch="main") as append_files:
+            if hasattr(append_files, "commit_uuid"):
+                append_files.commit_uuid = write_uuid
+            for data_file in data_files:
+                if hasattr(append_files, "append_data_file"):
+                    append_files.append_data_file(data_file)
+                else:
+                    append_files.append_file(  # type: ignore[attr-defined]
+                        data_file
+                    )
+        return
+
+    raise AttributeError(
+        "Missing transaction append API for metadata-only commits.")
+
+
+def write_arrow_to_table(  # noqa: PLR0913
     table: Table,
     *,
     arrow_table: pa.Table,
     config: ParsedConfig,
     log: logging.Logger,
+    table_id: tuple[str, ...] | None = None,
+    table_loader: t.Callable[[], Table] | None = None,
+    stream_name: str | None = None,
+    snapshot_properties: dict[str, str] | None = None,
+    write_uuid: str | uuid.UUID | None = None,
 ) -> None:
     """Append or overwrite an Iceberg table using a PyArrow table."""
-    snapshot_props = config.snapshot_properties or None
+    if table_id and table_loader:
+        commit_config = _commit_retry_config(config)
+        commit_uuid = _normalize_write_uuid(write_uuid)
+        commit_uuid_str = str(commit_uuid)
+        snapshot_props = {str(k): str(v) for k, v in (
+            config.snapshot_properties or {}).items()}
+        if snapshot_properties:
+            snapshot_props.update({str(k): str(v)
+                                  for k, v in snapshot_properties.items()})
+        snapshot_props[WRITE_UUID_PROPERTY] = commit_uuid_str
+        if stream_name:
+            snapshot_props.setdefault(
+                "target_s3tables.stream_name", stream_name)
+
+        def _simple_commit(commit_table: Table) -> None:
+            try:
+                if config.write_mode == "overwrite":
+                    commit_table.overwrite(
+                        arrow_table, snapshot_properties=snapshot_props)
+                else:
+                    commit_table.append(
+                        arrow_table, snapshot_properties=snapshot_props)
+            except TypeError:
+                log.debug(
+                    "snapshot_properties not supported by this PyIceberg version; "
+                    "commit status checks may be limited.",
+                )
+                if config.write_mode == "overwrite":
+                    commit_table.overwrite(arrow_table)
+                else:
+                    commit_table.append(arrow_table)
+
+        def _status_check(check_table: Table) -> bool:
+            return _table_has_write_uuid(check_table, commit_uuid_str)
+
+        if config.commit_retry_mode == "metadata-only" and config.write_mode == "append":
+            data_files = _prepare_data_files(
+                table,
+                arrow_table=arrow_table,
+                write_uuid=commit_uuid,
+                snapshot_properties=snapshot_props,
+                log=log,
+            )
+            if data_files is None:
+                log.warning(
+                    "Metadata-only retries requested but not supported. Falling back to simple.",
+                )
+            else:
+                def _metadata_commit(commit_table: Table) -> None:
+                    _append_data_files_metadata_only(
+                        commit_table,
+                        data_files=data_files,
+                        snapshot_properties=snapshot_props,
+                        write_uuid=commit_uuid,
+                    )
+
+                try:
+                    run_with_commit_retries(
+                        operation_name="append",
+                        table_id=table_id,
+                        commit_fn=_metadata_commit,
+                        table_loader=table_loader,
+                        config=commit_config,
+                        log=log,
+                        status_check_fn=_status_check,
+                    )
+                    return
+                except AttributeError:
+                    log.warning(
+                        "Metadata-only retries not available for this PyIceberg version. "
+                        "Falling back to simple retries.",
+                    )
+
+        try:
+            operation = "overwrite" if config.write_mode == "overwrite" else "append"
+            run_with_commit_retries(
+                operation_name=operation,
+                table_id=table_id,
+                commit_fn=_simple_commit,
+                table_loader=table_loader,
+                config=commit_config,
+                log=log,
+                status_check_fn=_status_check,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if config.write_mode == "append" and is_table_partitioned(table):
+                raise RuntimeError(
+                    "Append failed for a partitioned Iceberg table. PyIceberg partitioned writes "
+                    "may be limited depending on table spec and version. Consider using "
+                    "unpartitioned tables for now, switching to a compatible dynamic partition "
+                    "overwrite workflow, or using an engine with broader partitioned write "
+                    "support.",
+                ) from exc
+            raise
+        return
+
+    snapshot_props = snapshot_properties or config.snapshot_properties or None
 
     def _append() -> None:
         if snapshot_props:

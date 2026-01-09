@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import typing as t
+import uuid
 
 from singer_sdk.sinks import BatchSink
 
 from target_s3tables.config import ParsedConfig
 from target_s3tables.iceberg import (
+    build_snapshot_properties,
     evolve_table_schema_union_by_name,
     get_catalog,
     load_or_create_table,
@@ -17,6 +20,7 @@ from target_s3tables.iceberg import (
     table_identifier_for_stream,
     write_arrow_to_table,
 )
+from target_s3tables.retry import get_table_commit_lock
 
 
 class S3TablesSink(BatchSink):
@@ -51,6 +55,7 @@ class S3TablesSink(BatchSink):
         """
         self._batch_bytes = 0
         context["approx_bytes"] = 0
+        context["batch_id"] = uuid.uuid4().hex
 
     @property
     def is_full(self) -> bool:
@@ -79,19 +84,41 @@ class S3TablesSink(BatchSink):
         if not records:
             return
 
-        table = self._ensure_table()
+        self._ensure_table()
+        if self._catalog is None:
+            self._catalog = get_catalog(self._parsed_config, log=self.logger)
 
-        if self._parsed_config.evolve_schema:
-            evolve_table_schema_union_by_name(
-                table,
-                arrow_schema=self._arrow_schema,
+        def _reload_table() -> t.Any:
+            return load_or_create_table(
+                self._catalog,
+                table_id=self._table_id,
+                singer_schema=self.schema,
+                config=self._parsed_config,
                 log=self.logger,
             )
+
+        lock = (
+            get_table_commit_lock(self._table_id)
+            if self._parsed_config.internal_table_commit_locking
+            else contextlib.nullcontext()
+        )
 
         arrow_table = records_to_arrow_table(
             records,
             arrow_schema=self._arrow_schema,
             specs=self._field_specs,
+        )
+        write_uuid = uuid.uuid4()
+        snapshot_props = build_snapshot_properties(
+            self._parsed_config,
+            stream_name=self.stream_name,
+            write_uuid=str(write_uuid),
+            batch_id=t.cast(str | None, context.get("batch_id")),
+            extra_properties={
+                "target_s3tables.batch_rows": arrow_table.num_rows,
+                "target_s3tables.batch_bytes": context.get("approx_bytes", 0),
+                "target_s3tables.write_mode": self._parsed_config.write_mode,
+            },
         )
 
         self.logger.info(
@@ -101,12 +128,28 @@ class S3TablesSink(BatchSink):
             self._parsed_config.write_mode,
         )
         try:
-            write_arrow_to_table(
-                table,
-                arrow_table=arrow_table,
-                config=self._parsed_config,
-                log=self.logger,
-            )
+            with lock:
+                if self._parsed_config.evolve_schema:
+                    evolve_table_schema_union_by_name(
+                        _reload_table(),
+                        arrow_schema=self._arrow_schema,
+                        log=self.logger,
+                        config=self._parsed_config,
+                        table_id=self._table_id,
+                        table_loader=_reload_table,
+                    )
+
+                write_arrow_to_table(
+                    _reload_table(),
+                    arrow_table=arrow_table,
+                    config=self._parsed_config,
+                    log=self.logger,
+                    table_id=self._table_id,
+                    table_loader=_reload_table,
+                    stream_name=self.stream_name,
+                    snapshot_properties=snapshot_props,
+                    write_uuid=write_uuid,
+                )
         except Exception as exc:  # noqa: BLE001
             if _is_auth_error(exc):
                 raise RuntimeError(_auth_hint(self._parsed_config)) from exc
