@@ -19,7 +19,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  # Serialize integration tests per ref so concurrent pushes (e.g. back-to-back
+  # dependabot merges to main) don't write to the same Iceberg table in parallel
+  # and trigger optimistic-concurrency commit conflicts.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 env:

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import pyarrow as pa
 from pyiceberg.catalog import load_catalog
-from pyiceberg.exceptions import NoSuchTableError
+from pyiceberg.exceptions import CommitFailedException, NoSuchTableError
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.types import (
@@ -81,6 +81,7 @@ def retry(  # noqa: PLR0913
     max_attempts: int = 8,
     base_delay_s: float = 1.0,
     max_delay_s: float = 60.0,
+    before_retry: t.Callable[[], None] | None = None,
 ) -> t.Any:
     """Retry helper with exponential backoff + jitter for transient HTTP errors."""
     attempt = 0
@@ -104,10 +105,17 @@ def retry(  # noqa: PLR0913
                 delay,
             )
             time.sleep(delay)
+            if before_retry is not None:
+                before_retry()
 
 
 def _is_retriable_exception(exc: Exception) -> bool:
     """Determine if an exception is transient and should be retried."""
+    # Iceberg optimistic-concurrency conflict: another writer committed first.
+    # Retrying after refreshing the table's snapshot is the documented recovery.
+    if isinstance(exc, CommitFailedException):
+        return True
+
     status_code = getattr(exc, "status_code", None)
     if status_code is None and hasattr(exc, "response"):
         status_code = getattr(getattr(exc, "response"), "status_code", None)
@@ -826,17 +834,30 @@ def write_arrow_to_table(
         else:
             table.overwrite(arrow_table)
 
+    def _refresh() -> None:
+        table.refresh()
+
     try:
         if config.write_mode == "overwrite":
-            retry(_overwrite, log=log, op="overwrite")
+            retry(_overwrite, log=log, op="overwrite", before_retry=_refresh)
         else:
-            retry(_append, log=log, op="append")
+            retry(_append, log=log, op="append", before_retry=_refresh)
     except TypeError:
         # Older PyIceberg versions may not support snapshot_properties kwarg.
         if config.write_mode == "overwrite":
-            retry(lambda: table.overwrite(arrow_table), log=log, op="overwrite")
+            retry(
+                lambda: table.overwrite(arrow_table),
+                log=log,
+                op="overwrite",
+                before_retry=_refresh,
+            )
         else:
-            retry(lambda: table.append(arrow_table), log=log, op="append")
+            retry(
+                lambda: table.append(arrow_table),
+                log=log,
+                op="append",
+                before_retry=_refresh,
+            )
     except Exception as exc:  # noqa: BLE001
         if config.write_mode == "append" and is_table_partitioned(table):
             raise RuntimeError(
