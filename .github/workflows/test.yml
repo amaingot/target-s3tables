@@ -19,8 +19,19 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
+  # Serialize integration tests so concurrent runs don't write to the same
+  # Iceberg table in parallel and trigger optimistic-concurrency commit conflicts.
+  #
+  # For pull_request events, key on the PR number so forked PRs that happen to
+  # share a branch name with another PR don't collide, and so each PR gets its
+  # own queue with cancel-in-progress (newer pushes supersede older runs).
+  #
+  # For all other events (push to main, workflow_dispatch, etc.) key on
+  # github.ref and disable cancel-in-progress so back-to-back merges to main
+  # queue rather than cancel each other — this is required for post-merge
+  # integration coverage and is the whole reason this concurrency group exists.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_COLOR: 1
