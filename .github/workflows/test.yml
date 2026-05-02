@@ -89,7 +89,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🔐 Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
           aws-region: ${{ secrets.AWS_REGION }}
@@ -147,7 +147,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 🔐 Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
           aws-region: ${{ secrets.AWS_REGION }}
