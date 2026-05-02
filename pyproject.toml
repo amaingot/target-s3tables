@@ -23,7 +23,7 @@ license-files = [ "LICENSE" ]
 requires-python = ">=3.10"
 dependencies = [
     "singer-sdk~=0.53.4",
-    "requests~=2.32.3",
+    "requests>=2.32.3,<2.34.0",
     "pyarrow>=15",
     "pyiceberg[glue,pyarrow,s3fs]>=0.10.0",
     "s3fs>=2025.12,<2026.2",
