@@ -66,7 +66,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SINGER_SDK_LOG_CONFIG: ./target_s3tables_logging.yaml
       TARGET_S3TABLES_CATALOG_MODE: glue_rest
-      TARGET_S3TABLES_REGION: ${{ secrets.AWS_REGION }}
+      TARGET_S3TABLES_REGION: us-east-1
       TARGET_S3TABLES_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       TARGET_S3TABLES_TABLE_BUCKET_NAME: ${{ secrets.S3TABLES_TABLE_BUCKET_NAME }}
       TARGET_S3TABLES_NAMESPACE: default
@@ -92,7 +92,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: us-east-1
 
       - name: 🏗 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
@@ -125,8 +125,8 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       SINGER_SDK_LOG_CONFIG: ./target_s3tables_logging.yaml
       TARGET_S3TABLES_CATALOG_MODE: s3tables_rest
-      TARGET_S3TABLES_TABLE_BUCKET_ARN: arn:aws:s3tables:${{ secrets.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:bucket/${{ secrets.S3TABLES_TABLE_BUCKET_NAME }}
-      TARGET_S3TABLES_REGION: ${{ secrets.AWS_REGION }}
+      TARGET_S3TABLES_TABLE_BUCKET_ARN: arn:aws:s3tables:us-east-1:${{ secrets.AWS_ACCOUNT_ID }}:bucket/${{ secrets.S3TABLES_TABLE_BUCKET_NAME }}
+      TARGET_S3TABLES_REGION: us-east-1
       TARGET_S3TABLES_NAMESPACE: default
       TARGET_S3TABLES_WRITE_MODE: append
       TARGET_S3TABLES_BATCH_SIZE_ROWS: 5000
@@ -150,7 +150,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/S3TablesTestGitHubActions
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: us-east-1
 
       - name: 🏗 Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v6
