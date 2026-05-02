@@ -81,9 +81,22 @@ def retry(  # noqa: PLR0913
     max_attempts: int = 8,
     base_delay_s: float = 1.0,
     max_delay_s: float = 60.0,
-    before_retry: t.Callable[[], None] | None = None,
+    before_retry: t.Callable[[BaseException], None] | None = None,
 ) -> t.Any:
-    """Retry helper with exponential backoff + jitter for transient HTTP errors."""
+    """Retry helper with exponential backoff + jitter.
+
+    Retries on transient HTTP/network errors (HTTP 429, 5xx, timeouts,
+    connection errors, throttling) as well as Iceberg ``CommitFailedException``
+    raised by optimistic-concurrency conflicts. See
+    :func:`_is_retriable_exception` for the full classification.
+
+    If ``before_retry`` is provided, it is invoked with the caught exception
+    after sleeping and before the next attempt. Callers can inspect the
+    exception type to take recovery actions for specific failures (for example,
+    refreshing a table snapshot only on ``CommitFailedException``). Exceptions
+    raised by ``before_retry`` propagate and abort the retry loop, so callers
+    that want retries to continue regardless should swallow their own errors.
+    """
     attempt = 0
     while True:
         attempt += 1
@@ -106,7 +119,7 @@ def retry(  # noqa: PLR0913
             )
             time.sleep(delay)
             if before_retry is not None:
-                before_retry()
+                before_retry(exc)
 
 
 def _is_retriable_exception(exc: Exception) -> bool:
@@ -834,14 +847,38 @@ def write_arrow_to_table(
         else:
             table.overwrite(arrow_table)
 
-    def _refresh() -> None:
-        table.refresh()
+    def _refresh_on_commit_conflict(exc: BaseException) -> None:
+        # Only refresh on CommitFailedException — transient HTTP/network errors
+        # do not require (and may not benefit from) re-reading the table
+        # metadata. Tolerate refresh failures so a flaky catalog request here
+        # does not abort an otherwise-recoverable retry loop.
+        if not isinstance(exc, CommitFailedException):
+            return
+        try:
+            table.refresh()
+        # pylint: disable-next=broad-except
+        except Exception as refresh_exc:  # noqa: BLE001
+            log.warning(
+                "table.refresh() failed during retry recovery; "
+                "continuing with stale metadata: %s",
+                _format_exception_short(refresh_exc),
+            )
 
     try:
         if config.write_mode == "overwrite":
-            retry(_overwrite, log=log, op="overwrite", before_retry=_refresh)
+            retry(
+                _overwrite,
+                log=log,
+                op="overwrite",
+                before_retry=_refresh_on_commit_conflict,
+            )
         else:
-            retry(_append, log=log, op="append", before_retry=_refresh)
+            retry(
+                _append,
+                log=log,
+                op="append",
+                before_retry=_refresh_on_commit_conflict,
+            )
     except TypeError:
         # Older PyIceberg versions may not support snapshot_properties kwarg.
         if config.write_mode == "overwrite":
@@ -849,14 +886,14 @@ def write_arrow_to_table(
                 lambda: table.overwrite(arrow_table),
                 log=log,
                 op="overwrite",
-                before_retry=_refresh,
+                before_retry=_refresh_on_commit_conflict,
             )
         else:
             retry(
                 lambda: table.append(arrow_table),
                 log=log,
                 op="append",
-                before_retry=_refresh,
+                before_retry=_refresh_on_commit_conflict,
             )
     except Exception as exc:  # noqa: BLE001
         if config.write_mode == "append" and is_table_partitioned(table):
