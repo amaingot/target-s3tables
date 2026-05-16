@@ -25,7 +25,7 @@ jobs:
       - name: 🏗 Checkout Code
         uses: actions/checkout@v6
       - name: 🛠️ Build and Inspect Python Package
-        uses: hynek/build-and-inspect-python-package@v2
+        uses: hynek/build-and-inspect-python-package@v2.17.0
         id: baipp
 
   publish:
@@ -43,7 +43,7 @@ jobs:
           name: Packages
           path: dist
       - name: 🚀 Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1.13.0
+        uses: pypa/gh-action-pypi-publish@v1.14.0
       - name: 📝 Attach Artifacts to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
