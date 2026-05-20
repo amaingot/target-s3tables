@@ -107,8 +107,9 @@ def test_retry_passes_http_error_to_before_retry(
     assert seen_excs[0].status_code == 503
 
 
-# Verbatim from amaingot/target-s3tables#44 so the substring check is exercised
-# end-to-end against a realistic PyArrow error string.
+# Adapted from amaingot/target-s3tables#44 (key and bucket shortened) so the
+# substring check is exercised end-to-end against a realistic PyArrow error
+# string.
 _CRC64NVME_MESSAGE = (
     "When uploading part for key 'data/00000-0-abc.parquet' in bucket "
     "'x--table-s3': AWS Error UNKNOWN (HTTP status 400) during UploadPart "
