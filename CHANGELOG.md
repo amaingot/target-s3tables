@@ -5,4 +5,4 @@
 
 ### Bug Fixes
 
-* retry PyArrow CRC64NVME OSError during S3 multipart upload ([#45](https://github.com/amaingot/target-s3tables/issues/45)) ([2c52afc](https://github.com/amaingot/target-s3tables/commit/2c52afc6343aa59ddc7ab0e556dafb446b4c8cbf))
+* retry PyArrow CRC64NVME OSError during S3 multipart upload process ([#45](https://github.com/amaingot/target-s3tables/issues/45)) ([2c52afc](https://github.com/amaingot/target-s3tables/commit/2c52afc6343aa59ddc7ab0e556dafb446b4c8cbf))
