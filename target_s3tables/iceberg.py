@@ -129,6 +129,16 @@ def _is_retriable_exception(exc: Exception) -> bool:
     if isinstance(exc, CommitFailedException):
         return True
 
+    # PyArrow raises a plain OSError when the bundled AWS C++ SDK rejects an S3
+    # multipart-upload part with HTTP 400 BadDigest because the CRC64NVME it
+    # computed for the part does not match what S3 calculated. Retrying allocates
+    # a fresh upload ID and a new Parquet file, so the bad part is never
+    # resubmitted. See amaingot/target-s3tables#44.
+    if isinstance(exc, OSError):
+        msg = str(exc)
+        if "CRC64NVME" in msg or "BadDigest" in msg:
+            return True
+
     status_code = getattr(exc, "status_code", None)
     if status_code is None and hasattr(exc, "response"):
         status_code = getattr(getattr(exc, "response"), "status_code", None)

@@ -105,3 +105,59 @@ def test_retry_passes_http_error_to_before_retry(
     assert len(seen_excs) == 1
     assert isinstance(seen_excs[0], _HttpError)
     assert seen_excs[0].status_code == 503
+
+
+# Verbatim from amaingot/target-s3tables#44 so the substring check is exercised
+# end-to-end against a realistic PyArrow error string.
+_CRC64NVME_MESSAGE = (
+    "When uploading part for key 'data/00000-0-abc.parquet' in bucket "
+    "'x--table-s3': AWS Error UNKNOWN (HTTP status 400) during UploadPart "
+    "operation: Unable to parse ExceptionName: BadDigest Message: The "
+    "CRC64NVME you specified did not match the calculated checksum."
+)
+
+
+def test_pyarrow_crc64nvme_oserror_is_retriable() -> None:
+    exc = OSError(_CRC64NVME_MESSAGE)
+    assert _is_retriable_exception(exc) is True
+
+
+def test_pyarrow_baddigest_oserror_is_retriable() -> None:
+    exc = OSError("BadDigest: digest mismatch on UploadPart")
+    assert _is_retriable_exception(exc) is True
+
+
+def test_unrelated_oserror_is_not_retriable() -> None:
+    """Regression guard: only the CRC64NVME / BadDigest signature should retry.
+
+    Blanket OSError retries would swallow fatal errors like disk-full or bad
+    credentials and burn 8 attempts of backoff on each.
+    """
+    assert _is_retriable_exception(OSError("No space left on device")) is False
+    assert _is_retriable_exception(OSError("Permission denied")) is False
+
+
+def test_retry_recovers_from_crc64nvme_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("target_s3tables.iceberg.time.sleep", lambda _s: None)
+
+    attempts = {"n": 0}
+
+    def flaky() -> str:
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise OSError(_CRC64NVME_MESSAGE)
+        return "ok"
+
+    result = retry(
+        flaky,
+        log=logging.getLogger("test"),
+        op="append",
+        max_attempts=5,
+        base_delay_s=0.0,
+        max_delay_s=0.0,
+    )
+
+    assert result == "ok"
+    assert attempts["n"] == 2
