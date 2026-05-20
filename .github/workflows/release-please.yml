@@ -14,6 +14,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-please's built-in uv.lock updater silently no-ops on this
+      # project ("No entries modified in $.package[?(@.name=='target-s3tables')].version"
+      # in the log), so when it bumps pyproject.toml the lockfile is left
+      # behind and every job that runs `uv sync --locked` fails. Regenerate
+      # the lockfile here and push the fix back onto the release PR branch.
+      #
+      # Note: this push uses GITHUB_TOKEN, which does not retrigger CI on the
+      # PR. If unit tests need to re-run after the lockfile sync, click
+      # "Re-run all jobs" on the PR or push a trivial commit. Switching the
+      # release-please-action `token:` input to a PAT or GitHub App token
+      # avoids that.
+      - name: Checkout release PR branch
+        if: ${{ steps.release.outputs.prs }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.prs)[0].headBranchName }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup uv
+        if: ${{ steps.release.outputs.prs }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: ">=0.8"
+
+      - name: Sync uv.lock to match pyproject.toml
+        if: ${{ steps.release.outputs.prs }}
+        run: |
+          uv lock
+          if git diff --quiet uv.lock; then
+            echo "uv.lock already in sync — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: sync uv.lock"
+          git push
