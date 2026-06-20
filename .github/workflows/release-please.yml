@@ -13,7 +13,7 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         id: release
         with:
           config-file: release-please-config.json
@@ -32,7 +32,7 @@ jobs:
       # avoids that.
       - name: Checkout release PR branch
         if: ${{ steps.release.outputs.prs }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
         with:
           ref: ${{ fromJSON(steps.release.outputs.prs)[0].headBranchName }}
           token: ${{ secrets.GITHUB_TOKEN }}
